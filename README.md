@@ -1,9 +1,10 @@
 # Exodus Time Dialation
 
 The headless Journey Model is a Bun and TypeScript module for compiling and inspecting a
-validated Centauri Cluster Scenario and simulating one Interstellar Cruise between hierarchical,
-Keplerian Gate worldlines. In-system transfers, procedural generation, route planning, workers,
-and the browser application are implemented by later tickets.
+validated Centauri Cluster Scenario, simulating Interstellar Cruises between hierarchical,
+Keplerian Gate worldlines, and simulating powered In-system Transfers between moving Gates.
+Procedural generation, route planning, workers, and the browser application are implemented by
+later tickets.
 
 ## Commands
 
@@ -47,3 +48,12 @@ reported time residual is bounded by the greater of that base and the representa
 spacing at the duration and absolute arrival epoch; the search horizon is `1e16` seconds. The
 3.8-light-year analytic fixture is checked within 0.0001 cluster years and 0.05 ship days of the
 documented nominal values.
+
+`simulateInSystemTransfer` (or a `kind: "in-system-transfer"` request through
+`simulateJourney`) starts comoving with its departure Gate, solves a moving-target powered
+trajectory with constant proper-acceleration thrust during acceleration and braking, inserts a speed-capped
+coast when required, and reports phase clocks, peak speed, and terminal position/velocity
+residuals. Successful transfers require finite residuals within 1 m of position and 1e-6 m/s of
+velocity; the base time tolerance is 1e-7 s and all three tolerances plus the bounded search
+horizon are exported from `src/index.ts`. Infeasible profiles and non-convergent solves are
+distinct structured failures.

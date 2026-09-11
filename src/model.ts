@@ -16,7 +16,12 @@ import {
   type VelocityVector,
 } from "./quantities";
 import { evaluateScenarioWorldlines as resolveScenarioWorldlines } from "./orbital";
+import { simulateInSystemTransfer } from "./in-system-transfer";
 import { simulateJourney } from "./simulation";
+import type {
+  InSystemTransferRequest,
+  InSystemTransferSimulationResult,
+} from "./in-system-transfer";
 import type { JourneySimulationResult } from "./simulation";
 
 const stableIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -500,10 +505,17 @@ export type JourneyModel = {
     scenario: CompiledScenario,
     coordinateTime: Seconds,
   ) => ScenarioWorldlineResult;
-  readonly simulateJourney: (
+  readonly simulateJourney: {
+    (
+      scenario: CompiledScenario,
+      request: InSystemTransferRequest & { readonly kind: "in-system-transfer" },
+    ): InSystemTransferSimulationResult;
+    (scenario: CompiledScenario, request: unknown): JourneySimulationResult;
+  };
+  readonly simulateInSystemTransfer: (
     scenario: CompiledScenario,
     request: unknown,
-  ) => JourneySimulationResult;
+  ) => InSystemTransferSimulationResult;
 };
 
 type RecordValue = Record<string, unknown>;
@@ -2117,5 +2129,6 @@ export function createJourneyModel(): JourneyModel {
     formatScenarioInspection,
     evaluateWorldlines,
     simulateJourney,
+    simulateInSystemTransfer,
   });
 }

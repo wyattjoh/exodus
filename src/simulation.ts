@@ -10,6 +10,11 @@ import {
   type VelocityVector,
 } from "./quantities";
 import { evaluateGateWorldline } from "./orbital";
+import { simulateInSystemTransfer } from "./in-system-transfer";
+import type {
+  InSystemTransferRequest,
+  InSystemTransferSimulationResult,
+} from "./in-system-transfer";
 import {
   addVector,
   scaleVector,
@@ -784,6 +789,19 @@ function timeline(
 }
 
 /**
+ * Simulates one powered In-system Transfer when the request is explicitly tagged with
+ * `kind: "in-system-transfer"`; otherwise this overload preserves the Interstellar Cruise seam.
+ *
+ * @param scenario - The immutable, previously compiled Scenario.
+ * @param request - A tagged powered-transfer request.
+ * @returns A powered In-system Transfer timeline or structured transfer issues.
+ */
+export function simulateJourney(
+  scenario: CompiledScenario,
+  request: InSystemTransferRequest & { readonly kind: "in-system-transfer" },
+): InSystemTransferSimulationResult;
+
+/**
  * Simulates one Interstellar Cruise through the public Journey Model seam.
  *
  * The endpoint Gates must be the paired members of one Gate Connection. Their worldlines are
@@ -799,7 +817,16 @@ function timeline(
 export function simulateJourney(
   scenario: CompiledScenario,
   request: unknown,
-): JourneySimulationResult {
+): JourneySimulationResult;
+
+export function simulateJourney(
+  scenario: CompiledScenario,
+  request: unknown,
+): JourneySimulationResult | InSystemTransferSimulationResult {
+  if (isRecord(request) && request.kind === "in-system-transfer") {
+    return simulateInSystemTransfer(scenario, request);
+  }
+
   const issues: SimulationIssue[] = [];
   if (!isRecord(request)) {
     addIssue(

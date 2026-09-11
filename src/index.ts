@@ -85,6 +85,27 @@ export {
   simulateJourney,
 } from "./simulation";
 export { evaluateGateWorldline, evaluateScenarioWorldlines } from "./orbital";
+export {
+  IN_SYSTEM_TRANSFER_MAX_SEARCH_SECONDS,
+  IN_SYSTEM_TRANSFER_POSITION_RESIDUAL_TOLERANCE,
+  IN_SYSTEM_TRANSFER_TIME_RESIDUAL_TOLERANCE,
+  IN_SYSTEM_TRANSFER_VELOCITY_RESIDUAL_TOLERANCE,
+  simulateInSystemTransfer,
+} from "./in-system-transfer";
+export type {
+  InSystemTransferEvent,
+  InSystemTransferEventKind,
+  InSystemTransferIssue,
+  InSystemTransferIssueCode,
+  InSystemTransferPhase,
+  InSystemTransferPhaseKind,
+  InSystemTransferRequest,
+  InSystemTransferSimulationFailure,
+  InSystemTransferSimulationResult,
+  InSystemTransferSimulationSuccess,
+  InSystemTransferTerminalResiduals,
+  InSystemTransferTimeline,
+} from "./in-system-transfer";
 export type {
   ArrivalIntercept,
   FixedGateCruiseRequest,

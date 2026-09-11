@@ -17,12 +17,17 @@ import {
 } from "./quantities";
 import { evaluateScenarioWorldlines as resolveScenarioWorldlines } from "./orbital";
 import { simulateInSystemTransfer } from "./in-system-transfer";
-import { simulateJourney } from "./simulation";
+import { simulateJourney, simulateMultiLegJourney } from "./simulation";
 import type {
   InSystemTransferRequest,
   InSystemTransferSimulationResult,
 } from "./in-system-transfer";
-import type { JourneySimulationResult } from "./simulation";
+import type {
+  InterstellarCruiseRequest,
+  JourneyRequest,
+  JourneySimulationResult,
+  MultiLegJourneySimulationResult,
+} from "./simulation";
 
 const stableIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -510,8 +515,17 @@ export type JourneyModel = {
       scenario: CompiledScenario,
       request: InSystemTransferRequest & { readonly kind: "in-system-transfer" },
     ): InSystemTransferSimulationResult;
-    (scenario: CompiledScenario, request: unknown): JourneySimulationResult;
+    (scenario: CompiledScenario, request: InterstellarCruiseRequest): JourneySimulationResult;
+    (scenario: CompiledScenario, request: JourneyRequest): MultiLegJourneySimulationResult;
+    (
+      scenario: CompiledScenario,
+      request: unknown,
+    ): JourneySimulationResult | MultiLegJourneySimulationResult | InSystemTransferSimulationResult;
   };
+  readonly simulateMultiLegJourney: (
+    scenario: CompiledScenario,
+    request: unknown,
+  ) => MultiLegJourneySimulationResult;
   readonly simulateInSystemTransfer: (
     scenario: CompiledScenario,
     request: unknown,
@@ -2129,6 +2143,7 @@ export function createJourneyModel(): JourneyModel {
     formatScenarioInspection,
     evaluateWorldlines,
     simulateJourney,
+    simulateMultiLegJourney,
     simulateInSystemTransfer,
   });
 }

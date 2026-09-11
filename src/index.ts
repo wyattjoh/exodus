@@ -83,6 +83,7 @@ export {
   INTERSTELLAR_CRUISE_SPEED,
   simulateFixedGateCruise,
   simulateJourney,
+  simulateMultiLegJourney,
 } from "./simulation";
 export { evaluateGateWorldline, evaluateScenarioWorldlines } from "./orbital";
 export {
@@ -109,17 +110,37 @@ export type {
 export type {
   ArrivalIntercept,
   FixedGateCruiseRequest,
+  InterstellarCruiseRequest,
   JourneyClockReading,
+  JourneyCruiseLeg,
+  JourneyDwellLeg,
+  JourneyDwellTimeline,
   JourneyEventKind,
+  JourneyLeg,
+  JourneyLegKind,
   JourneyPhase,
   JourneyPhaseKind,
+  JourneyRequest,
   JourneySimulationFailure,
   JourneySimulationRequest,
   JourneySimulationResult,
   JourneySimulationSuccess,
   JourneyTimeline,
   JourneyTimelineEvent,
+  JourneyTransferLeg,
+  MultiLegJourneyLeg,
+  MultiLegJourneyPhase,
+  MultiLegJourneyRequest,
+  MultiLegJourneySimulationFailure,
+  MultiLegJourneySimulationResult,
+  MultiLegJourneySimulationSuccess,
+  MultiLegJourneyTimeline,
+  MultiLegJourneyTimelineEvent,
   SimulationIssue,
   SimulationIssueCode,
 } from "./simulation";
-export { minimalScenario } from "./minimal-scenario";
+export {
+  minimalScenario,
+  multiLegJourneyRequest,
+  multiLegJourneyScenario,
+} from "./minimal-scenario";

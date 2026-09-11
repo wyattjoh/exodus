@@ -57,3 +57,12 @@ residuals. Successful transfers require finite residuals within 1 m of position 
 velocity; the base time tolerance is 1e-7 s and all three tolerances plus the bounded search
 horizon are exported from `src/index.ts`. Infeasible profiles and non-convergent solves are
 distinct structured failures.
+
+A tagged `kind: "journey"` request with ordered `legs` composes
+Interstellar Cruises, powered In-system Transfers, and Gate-comoving Dwells into one
+`MultiLegJourneyTimeline`. Each phase records its absolute start and end Scenario epochs plus
+cumulative Cluster Coordinate Time, Ship Proper Time, and Aging Difference. Cruise transitions
+remain explicit zero-duration phases, powered transfer detail is retained in each leg, and Dwell
+proper time is integrated from the Gate worldline. Its cumulative clocks are exposed through
+`timeline.clocks`; `multiLegJourneyScenario` and `multiLegJourneyRequest` provide a deterministic
+end-to-end public-seam fixture.

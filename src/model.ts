@@ -10,6 +10,8 @@ import {
   type Vector3,
   type VelocityVector,
 } from "./quantities";
+import { simulateJourney } from "./simulation";
+import type { JourneySimulationResult } from "./simulation";
 
 const stableIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -352,6 +354,10 @@ export type JourneyModel = {
   readonly compileScenario: (input: unknown) => CompileScenarioResult;
   readonly inspectScenario: (scenario: CompiledScenario) => ScenarioInspection;
   readonly formatScenarioInspection: (inspection: ScenarioInspection) => string;
+  readonly simulateJourney: (
+    scenario: CompiledScenario,
+    request: unknown,
+  ) => JourneySimulationResult;
 };
 
 type RecordValue = Record<string, unknown>;
@@ -1671,12 +1677,13 @@ export function formatScenarioInspection(inspection: ScenarioInspection): string
  * The current implementation is stateless: all Scenario data is supplied to each operation and
  * all results are returned as immutable values.
  *
- * @returns A Journey Model adapter exposing compilation and inspection operations.
+ * @returns A Journey Model adapter exposing compilation, inspection, and fixed-gate simulation operations.
  */
 export function createJourneyModel(): JourneyModel {
   return Object.freeze({
     compileScenario,
     inspectScenario,
     formatScenarioInspection,
+    simulateJourney,
   });
 }

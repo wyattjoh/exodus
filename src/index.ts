@@ -59,4 +59,24 @@ export type {
   ValidationIssue,
   ValidationIssueCode,
 } from "./model";
+export {
+  INTERSTELLAR_CRUISE_SPEED,
+  simulateFixedGateCruise,
+  simulateJourney,
+} from "./simulation";
+export type {
+  FixedGateCruiseRequest,
+  JourneyClockReading,
+  JourneyEventKind,
+  JourneyPhase,
+  JourneyPhaseKind,
+  JourneySimulationFailure,
+  JourneySimulationRequest,
+  JourneySimulationResult,
+  JourneySimulationSuccess,
+  JourneyTimeline,
+  JourneyTimelineEvent,
+  SimulationIssue,
+  SimulationIssueCode,
+} from "./simulation";
 export { minimalScenario } from "./minimal-scenario";

@@ -43,6 +43,8 @@ export const minimalScenario: ScenarioInput = Object.freeze({
       parentId: undefined,
       positionAtEpoch: origin,
       velocityAtEpoch: stationaryVelocity,
+      orbitalElements: undefined,
+      orbit: undefined,
     }),
     Object.freeze({
       id: "anchor:selene-star",
@@ -53,6 +55,8 @@ export const minimalScenario: ScenarioInput = Object.freeze({
       parentId: undefined,
       positionAtEpoch: selenePosition,
       velocityAtEpoch: stationaryVelocity,
+      orbitalElements: undefined,
+      orbit: undefined,
     }),
   ]),
   gates: Object.freeze([
@@ -64,6 +68,8 @@ export const minimalScenario: ScenarioInput = Object.freeze({
       orbitalAnchorId: "anchor:terra-star",
       positionAtEpoch: origin,
       velocityAtEpoch: stationaryVelocity,
+      orbitalElements: undefined,
+      orbit: undefined,
     }),
     Object.freeze({
       id: "gate:selene",
@@ -73,6 +79,8 @@ export const minimalScenario: ScenarioInput = Object.freeze({
       orbitalAnchorId: "anchor:selene-star",
       positionAtEpoch: selenePosition,
       velocityAtEpoch: stationaryVelocity,
+      orbitalElements: undefined,
+      orbit: undefined,
     }),
   ]),
   gateConnections: Object.freeze([

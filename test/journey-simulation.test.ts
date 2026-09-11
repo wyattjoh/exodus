@@ -61,7 +61,7 @@ const cruiseRequest = {
   cruiseSpeed: undefined,
 } as const;
 
-describe("fixed-gate Journey simulation", () => {
+describe("Interstellar Cruise Journey simulation", () => {
   test("returns departure, cruise, and arrival phases with both cumulative clocks", () => {
     const scenario = requireScenario(scenarioAtDistance(3.8 * lightYear));
     const result = simulateJourney(scenario, cruiseRequest);
@@ -166,7 +166,7 @@ describe("fixed-gate Journey simulation", () => {
     }
   });
 
-  test("rejects a non-stationary endpoint and a non-paired endpoint", () => {
+  test("intercepts a moving endpoint and rejects a non-paired endpoint", () => {
     const movingScenario = requireScenario({
       ...minimalScenario,
       gates: [
@@ -178,9 +178,9 @@ describe("fixed-gate Journey simulation", () => {
       ],
     });
     const movingResult = simulateJourney(movingScenario, cruiseRequest);
-    expect(movingResult.ok).toBe(false);
-    if (!movingResult.ok) {
-      expect(movingResult.issues.some((issue) => issue.code === "non-stationary-gate")).toBe(true);
+    expect(movingResult.ok).toBe(true);
+    if (movingResult.ok) {
+      expect(Number(movingResult.timeline.arrivalVelocity.x.value)).toBe(1);
     }
 
     const nonPairedResult = simulateJourney(requireScenario(minimalScenario), {

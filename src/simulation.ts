@@ -5,13 +5,33 @@ import {
   seconds,
   type Meters,
   type MetersPerSecond,
+  type PositionVector,
   type Seconds,
+  type VelocityVector,
 } from "./quantities";
-import type { CompiledGate, CompiledScenario, DomainEntityType, StableId } from "./model";
+import { evaluateGateWorldline } from "./orbital";
+import {
+  addVector,
+  scaleVector,
+  subtractVector,
+  type NumericVector3,
+  vectorMagnitude,
+} from "./vector";
+import type {
+  CompiledScenario,
+  DomainEntityType,
+  GateWorldline,
+  StableId,
+  WorldlineIssue,
+} from "./model";
 
 const stableIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const FIXED_CRUISE_BETA = 0.999;
 const zeroSeconds = seconds(0);
+const MAX_INTERCEPT_ITERATIONS = 160;
+const INTERCEPT_POSITION_TOLERANCE_FACTOR = 1e-13;
+const INTERCEPT_MINIMUM_POSITION_TOLERANCE = 1;
+const INTERCEPT_TIME_TOLERANCE = 1e-7;
 
 /**
  * The fixed Cluster Frame speed used by every initial-model Interstellar Cruise.
@@ -21,7 +41,32 @@ export const INTERSTELLAR_CRUISE_SPEED: MetersPerSecond = metersPerSecond(
 );
 
 /**
- * The kinds of elapsed-time phases in a fixed-gate Journey Timeline.
+ * The maximum duration searched while bracketing a future Arrival Intercept.
+ */
+export const INTERCEPT_MAX_SEARCH_SECONDS = 1e16;
+
+/**
+ * The relative position-residual factor used by the intercept solver. This is a numerical
+ * tolerance, not a physical uncertainty bound.
+ */
+export const INTERCEPT_POSITION_RESIDUAL_FACTOR = INTERCEPT_POSITION_TOLERANCE_FACTOR;
+
+/**
+ * Relative position-residual tolerance used while refining a moving-Gate intercept.
+ */
+export const INTERCEPT_POSITION_RESIDUAL_TOLERANCE = INTERCEPT_POSITION_TOLERANCE_FACTOR;
+
+/**
+ * Base absolute time-interval tolerance used while refining a moving-Gate intercept.
+ *
+ * The effective contract is the greater of this value and the IEEE-754 representable spacing at
+ * the candidate duration and absolute arrival coordinate time. This keeps the bounded contract
+ * explicit at long horizons where a smaller fixed tolerance cannot be represented.
+ */
+export const INTERCEPT_TIME_RESIDUAL_TOLERANCE = INTERCEPT_TIME_TOLERANCE;
+
+/**
+ * The kinds of elapsed-time phases in an Interstellar Cruise Journey Timeline.
  */
 export type JourneyPhaseKind =
   | "departure-transition"
@@ -29,7 +74,7 @@ export type JourneyPhaseKind =
   | "arrival-transition";
 
 /**
- * The observable events at the boundaries of a fixed-gate Journey.
+ * The observable events at the boundaries of an Interstellar Cruise Journey.
  */
 export type JourneyEventKind = "departure" | "cruise-departure" | "cruise-arrival" | "arrival";
 
@@ -67,15 +112,40 @@ export type JourneyPhase = {
 };
 
 /**
- * A fixed-gate Journey Timeline containing every transition, cruise, and cumulative clock reading.
+ * The numerical result of solving one moving destination-Gate intercept.
+ */
+export type ArrivalIntercept = {
+  readonly destinationGateId: StableId;
+  readonly coordinateTime: Seconds;
+  readonly duration: Seconds;
+  readonly position: PositionVector;
+  readonly velocity: VelocityVector;
+  readonly cruiseVelocity: VelocityVector;
+  readonly positionResidual: Meters;
+  readonly timeResidual: Seconds;
+};
+
+/**
+ * An immutable Journey Timeline containing every transition, cruise, and cumulative clock reading.
+ *
+ * Endpoint states are evaluated on the departure and destination Gate worldlines. The arrival
+ * transition therefore reports the destination Gate's instantaneous position and velocity rather
+ * than reusing its state at the Journey departure epoch.
  */
 export type JourneyTimeline = {
   readonly departureGateId: StableId;
   readonly destinationGateId: StableId;
   readonly shipProfileId: StableId;
   readonly departureCoordinateTime: Seconds;
+  readonly arrivalCoordinateTime: Seconds;
   readonly distance: Meters;
   readonly cruiseSpeed: MetersPerSecond;
+  readonly cruiseVelocity: VelocityVector;
+  readonly departurePosition: PositionVector;
+  readonly departureVelocity: VelocityVector;
+  readonly arrivalPosition: PositionVector;
+  readonly arrivalVelocity: VelocityVector;
+  readonly arrivalIntercept: ArrivalIntercept;
   readonly phases: readonly JourneyPhase[];
   readonly events: readonly JourneyTimelineEvent[];
   readonly total: JourneyClockReading;
@@ -85,7 +155,7 @@ export type JourneyTimeline = {
 };
 
 /**
- * The fixed-gate simulation request accepted at the Journey Model boundary.
+ * The moving-Gate Interstellar Cruise request accepted at the Journey Model boundary.
  *
  * `cruiseSpeed` is explicit so callers can document the contract value; `undefined` selects the
  * model's fixed `0.999c` value. `departureCoordinateTime` is the absolute Scenario coordinate
@@ -107,7 +177,7 @@ export type FixedGateCruiseRequest = Omit<JourneySimulationRequest, "cruiseSpeed
 };
 
 /**
- * Structured failure categories produced while simulating a fixed-gate Journey.
+ * Structured failure categories produced while simulating an Interstellar Cruise.
  */
 export type SimulationIssueCode =
   | "invalid-request"
@@ -117,10 +187,15 @@ export type SimulationIssueCode =
   | "missing-zpz-generator"
   | "invalid-distance"
   | "invalid-speed"
-  | "non-stationary-gate";
+  | "non-stationary-gate"
+  | "invalid-coordinate-time"
+  | "invalid-orbital-elements"
+  | "non-convergent-orbit"
+  | "non-finite-worldline"
+  | "non-convergent-intercept";
 
 /**
- * A structured explanation of one rejected Journey simulation request.
+ * A structured explanation of one rejected Journey simulation request or numerical solve.
  */
 export type SimulationIssue = {
   readonly code: SimulationIssueCode;
@@ -132,7 +207,7 @@ export type SimulationIssue = {
 };
 
 /**
- * The successful result of a fixed-gate Journey simulation.
+ * The successful result of a moving-Gate Interstellar Cruise simulation.
  */
 export type JourneySimulationSuccess = {
   readonly ok: true;
@@ -141,7 +216,7 @@ export type JourneySimulationSuccess = {
 };
 
 /**
- * The unsuccessful result of a fixed-gate Journey simulation.
+ * The unsuccessful result of a moving-Gate Interstellar Cruise simulation.
  */
 export type JourneySimulationFailure = {
   readonly ok: false;
@@ -150,7 +225,7 @@ export type JourneySimulationFailure = {
 };
 
 /**
- * The discriminated result returned by fixed-gate Journey simulation.
+ * The discriminated result returned by Interstellar Cruise simulation.
  */
 export type JourneySimulationResult = JourneySimulationSuccess | JourneySimulationFailure;
 
@@ -187,6 +262,16 @@ function addIssue(
 }
 
 type RecordValue = Record<string, unknown>;
+
+type InterceptEvaluation = {
+  readonly duration: number;
+  readonly target: GateWorldline;
+  readonly residual: number;
+};
+
+type InterceptSolution = InterceptEvaluation & {
+  readonly timeResidual: number;
+};
 
 function isRecord(value: unknown): value is RecordValue {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -252,7 +337,7 @@ function readSeconds(value: unknown, path: string, issues: SimulationIssue[]): S
   if (!isRecord(value) || value.unit !== "s" || typeof value.value !== "number") {
     addIssue(
       issues,
-      "invalid-request",
+      "invalid-coordinate-time",
       path,
       `${path} must be a finite SI quantity with unit s.`,
       undefined,
@@ -265,7 +350,7 @@ function readSeconds(value: unknown, path: string, issues: SimulationIssue[]): S
   if (!Number.isFinite(value.value)) {
     addIssue(
       issues,
-      "invalid-request",
+      "invalid-coordinate-time",
       path,
       `${path} must contain a finite numeric value.`,
       undefined,
@@ -316,32 +401,28 @@ function readCruiseSpeed(
   return metersPerSecond(value.value);
 }
 
-function gateSpeed(gate: CompiledGate): number {
-  return Math.hypot(
-    gate.velocityAtEpoch.x.value,
-    gate.velocityAtEpoch.y.value,
-    gate.velocityAtEpoch.z.value,
-  );
+function vector(position: NumericVector3): PositionVector {
+  return Object.freeze({
+    x: meters(position.x),
+    y: meters(position.y),
+    z: meters(position.z),
+  });
 }
 
-function gateDistance(departureGate: CompiledGate, destinationGate: CompiledGate): number {
-  return Math.hypot(
-    destinationGate.positionAtEpoch.x.value - departureGate.positionAtEpoch.x.value,
-    destinationGate.positionAtEpoch.y.value - departureGate.positionAtEpoch.y.value,
-    destinationGate.positionAtEpoch.z.value - departureGate.positionAtEpoch.z.value,
-  );
+function velocity(value: NumericVector3): VelocityVector {
+  return Object.freeze({
+    x: metersPerSecond(value.x),
+    y: metersPerSecond(value.y),
+    z: metersPerSecond(value.z),
+  });
 }
 
-function paired(
-  scenario: CompiledScenario,
-  departureGateId: StableId,
-  destinationGateId: StableId,
-): boolean {
-  return scenario.gateConnections.some(
-    (connection) =>
-      (connection.gateAId === departureGateId && connection.gateBId === destinationGateId) ||
-      (connection.gateAId === destinationGateId && connection.gateBId === departureGateId),
-  );
+function numericPosition(value: PositionVector): NumericVector3 {
+  return { x: value.x.value, y: value.y.value, z: value.z.value };
+}
+
+function numericVelocity(value: VelocityVector): NumericVector3 {
+  return { x: value.x.value, y: value.y.value, z: value.z.value };
 }
 
 function clocks(clusterCoordinateTime: Seconds, shipProperTime: Seconds): JourneyClockReading {
@@ -384,55 +465,332 @@ function event(
   });
 }
 
+function paired(
+  scenario: CompiledScenario,
+  departureGateId: StableId,
+  destinationGateId: StableId,
+): boolean {
+  return scenario.gateConnections.some(
+    (connection) =>
+      (connection.gateAId === departureGateId && connection.gateBId === destinationGateId) ||
+      (connection.gateAId === destinationGateId && connection.gateBId === departureGateId),
+  );
+}
+
+function addWorldlineIssues(
+  worldlineIssues: readonly WorldlineIssue[],
+  issues: SimulationIssue[],
+): void {
+  for (const worldlineIssue of worldlineIssues) {
+    addIssue(
+      issues,
+      worldlineIssue.code,
+      worldlineIssue.path,
+      worldlineIssue.message,
+      worldlineIssue.entityType,
+      worldlineIssue.entityId,
+      undefined,
+    );
+  }
+}
+
+function targetResidual(
+  departurePosition: NumericVector3,
+  target: GateWorldline,
+  cruiseSpeed: number,
+  duration: number,
+): number {
+  const displacement = subtractVector(numericPosition(target.position), departurePosition);
+  return vectorMagnitude(displacement) - cruiseSpeed * duration;
+}
+
+function representableTimeSpacing(value: number): number {
+  const magnitude = Math.abs(value);
+  if (!Number.isFinite(magnitude)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  if (magnitude === 0) {
+    return Number.MIN_VALUE;
+  }
+
+  const exponent = Math.floor(Math.log2(magnitude));
+  return exponent < -1022 ? Number.MIN_VALUE : 2 ** (exponent - 52);
+}
+
+function effectiveTimeResidualTolerance(
+  departureCoordinateTime: Seconds,
+  lowerDuration: number,
+  upperDuration: number,
+): number {
+  return Math.max(
+    INTERCEPT_TIME_TOLERANCE,
+    representableTimeSpacing(lowerDuration),
+    representableTimeSpacing(upperDuration),
+    representableTimeSpacing(departureCoordinateTime.value + lowerDuration),
+    representableTimeSpacing(departureCoordinateTime.value + upperDuration),
+  );
+}
+
+function evaluateInterceptAt(
+  scenario: CompiledScenario,
+  destinationGateId: StableId,
+  departurePosition: NumericVector3,
+  departureCoordinateTime: Seconds,
+  cruiseSpeed: MetersPerSecond,
+  duration: number,
+):
+  | {
+      readonly ok: true;
+      readonly evaluation: InterceptEvaluation;
+    }
+  | {
+      readonly ok: false;
+      readonly issues: readonly WorldlineIssue[];
+    } {
+  const coordinateTime = seconds(departureCoordinateTime.value + duration);
+  const result = evaluateGateWorldline(scenario, destinationGateId, coordinateTime);
+  if (!result.ok) {
+    return { ok: false, issues: result.issues };
+  }
+
+  return {
+    ok: true,
+    evaluation: {
+      duration,
+      target: result.state,
+      residual: targetResidual(departurePosition, result.state, cruiseSpeed.value, duration),
+    },
+  };
+}
+
+function intercept(
+  scenario: CompiledScenario,
+  destinationGateId: StableId,
+  departurePosition: NumericVector3,
+  departureCoordinateTime: Seconds,
+  cruiseSpeed: MetersPerSecond,
+  issues: SimulationIssue[],
+): InterceptSolution | undefined {
+  const initial = evaluateInterceptAt(
+    scenario,
+    destinationGateId,
+    departurePosition,
+    departureCoordinateTime,
+    cruiseSpeed,
+    0,
+  );
+  if (!initial.ok) {
+    addWorldlineIssues(initial.issues, issues);
+    return undefined;
+  }
+
+  let lower = initial.evaluation;
+  if (lower.residual <= 0) {
+    addIssue(
+      issues,
+      "invalid-distance",
+      "gates.positionAtEpoch",
+      "Interstellar Cruise requires distinct departure and destination Gate positions.",
+      "gate",
+      destinationGateId,
+      undefined,
+    );
+    return undefined;
+  }
+
+  let upperDuration = Math.max(1, lower.residual / cruiseSpeed.value);
+  let upper: InterceptEvaluation | undefined;
+  for (let expansion = 0; expansion < MAX_INTERCEPT_ITERATIONS; expansion += 1) {
+    if (!Number.isFinite(upperDuration) || upperDuration > INTERCEPT_MAX_SEARCH_SECONDS) {
+      break;
+    }
+    const candidate = evaluateInterceptAt(
+      scenario,
+      destinationGateId,
+      departurePosition,
+      departureCoordinateTime,
+      cruiseSpeed,
+      upperDuration,
+    );
+    if (!candidate.ok) {
+      addWorldlineIssues(candidate.issues, issues);
+      return undefined;
+    }
+    if (candidate.evaluation.residual <= 0) {
+      upper = candidate.evaluation;
+      break;
+    }
+    upperDuration *= 2;
+  }
+
+  if (upper === undefined) {
+    addIssue(
+      issues,
+      "non-convergent-intercept",
+      `gates.${destinationGateId}`,
+      `No future Arrival Intercept for Gate ${destinationGateId} was bracketed within the configured search horizon.`,
+      "gate",
+      destinationGateId,
+      undefined,
+    );
+    return undefined;
+  }
+
+  let best = Math.abs(lower.residual) < Math.abs(upper.residual) ? lower : upper;
+  let timeResidual = upper.duration - lower.duration;
+  let timeTolerance = effectiveTimeResidualTolerance(
+    departureCoordinateTime,
+    lower.duration,
+    upper.duration,
+  );
+  let converged = false;
+  const positionTolerance = Math.max(
+    INTERCEPT_MINIMUM_POSITION_TOLERANCE,
+    Math.max(Math.abs(lower.residual), Math.abs(upper.residual)) *
+      INTERCEPT_POSITION_TOLERANCE_FACTOR,
+  );
+  for (let iteration = 0; iteration < MAX_INTERCEPT_ITERATIONS; iteration += 1) {
+    const midpointDuration = (lower.duration + upper.duration) / 2;
+    const midpointStagnated =
+      midpointDuration === lower.duration || midpointDuration === upper.duration;
+    const midpoint = evaluateInterceptAt(
+      scenario,
+      destinationGateId,
+      departurePosition,
+      departureCoordinateTime,
+      cruiseSpeed,
+      midpointDuration,
+    );
+    if (!midpoint.ok) {
+      addWorldlineIssues(midpoint.issues, issues);
+      return undefined;
+    }
+
+    if (Math.abs(midpoint.evaluation.residual) < Math.abs(best.residual)) {
+      best = midpoint.evaluation;
+    }
+
+    if (!midpointStagnated) {
+      if (midpoint.evaluation.residual > 0) {
+        lower = midpoint.evaluation;
+      } else {
+        upper = midpoint.evaluation;
+      }
+      timeResidual = upper.duration - lower.duration;
+    }
+    timeTolerance = effectiveTimeResidualTolerance(
+      departureCoordinateTime,
+      lower.duration,
+      upper.duration,
+    );
+    const positionConverged = Math.abs(midpoint.evaluation.residual) <= positionTolerance;
+    const timeConverged = timeResidual <= timeTolerance;
+    if (positionConverged && timeConverged) {
+      best = midpoint.evaluation;
+      converged = true;
+      break;
+    }
+    if (midpointStagnated) {
+      break;
+    }
+  }
+
+  if (!converged) {
+    addIssue(
+      issues,
+      "non-convergent-intercept",
+      `gates.${destinationGateId}`,
+      `Arrival Intercept for Gate ${destinationGateId} did not satisfy the position residual bound of ${positionTolerance} m and representable time residual bound of ${timeTolerance} s before refinement stopped.`,
+      "gate",
+      destinationGateId,
+      undefined,
+    );
+    return undefined;
+  }
+
+  return Object.freeze({ ...best, timeResidual });
+}
+
 function timeline(
-  departureGate: CompiledGate,
-  destinationGate: CompiledGate,
+  departureGateId: StableId,
+  destinationGateId: StableId,
   shipProfileId: StableId,
   departureCoordinateTime: Seconds,
-  distance: Meters,
+  departure: GateWorldline,
   cruiseSpeed: MetersPerSecond,
+  solvedIntercept: InterceptSolution,
 ): JourneyTimeline {
-  const coordinateDuration = seconds(distance.value / cruiseSpeed.value);
-  const properTimeFactor = Math.sqrt(1 - FIXED_CRUISE_BETA ** 2);
-  const properDuration = seconds(coordinateDuration.value * properTimeFactor);
-  const departure = clocks(zeroSeconds, zeroSeconds);
-  const cruiseDeparture = clocks(zeroSeconds, zeroSeconds);
-  const cruiseArrival = clocks(coordinateDuration, properDuration);
-  const arrival = cruiseArrival;
+  const duration = solvedIntercept.duration;
+  const destinationPosition = numericPosition(solvedIntercept.target.position);
+  const departurePosition = numericPosition(departure.position);
+  const displacement = subtractVector(destinationPosition, departurePosition);
+  const displacementDistance = vectorMagnitude(displacement);
+  const cruiseDirection = scaleVector(displacement, 1 / displacementDistance);
+  const cruiseVelocity = scaleVector(cruiseDirection, cruiseSpeed.value);
+  const shipArrivalPosition = addVector(departurePosition, scaleVector(cruiseVelocity, duration));
+  const positionResidual = vectorMagnitude(
+    subtractVector(shipArrivalPosition, destinationPosition),
+  );
+  const cruiseDuration = seconds(duration);
+  const properDuration = seconds(duration * Math.sqrt(1 - FIXED_CRUISE_BETA ** 2));
+  const departureReading = clocks(zeroSeconds, zeroSeconds);
+  const cruiseDepartureReading = clocks(zeroSeconds, zeroSeconds);
+  const cruiseArrivalReading = clocks(cruiseDuration, properDuration);
+  const arrivalReading = cruiseArrivalReading;
   const phases = Object.freeze([
-    phase("departure-transition", departure, cruiseDeparture),
-    phase("interstellar-cruise", cruiseDeparture, cruiseArrival),
-    phase("arrival-transition", cruiseArrival, arrival),
+    phase("departure-transition", departureReading, cruiseDepartureReading),
+    phase("interstellar-cruise", cruiseDepartureReading, cruiseArrivalReading),
+    phase("arrival-transition", cruiseArrivalReading, arrivalReading),
   ]);
   const events = Object.freeze([
-    event("departure", "departure-transition", departure),
-    event("cruise-departure", "interstellar-cruise", cruiseDeparture),
-    event("cruise-arrival", "interstellar-cruise", cruiseArrival),
-    event("arrival", "arrival-transition", arrival),
+    event("departure", "departure-transition", departureReading),
+    event("cruise-departure", "interstellar-cruise", cruiseDepartureReading),
+    event("cruise-arrival", "interstellar-cruise", cruiseArrivalReading),
+    event("arrival", "arrival-transition", arrivalReading),
   ]);
+  const cruiseVelocityVector = velocity(cruiseVelocity);
+  const arrivalIntercept: ArrivalIntercept = Object.freeze({
+    destinationGateId,
+    coordinateTime: seconds(departureCoordinateTime.value + duration),
+    duration: cruiseDuration,
+    position: solvedIntercept.target.position,
+    velocity: solvedIntercept.target.velocity,
+    cruiseVelocity: cruiseVelocityVector,
+    positionResidual: meters(positionResidual),
+    timeResidual: seconds(solvedIntercept.timeResidual),
+  });
 
   return Object.freeze({
-    departureGateId: departureGate.id,
-    destinationGateId: destinationGate.id,
+    departureGateId,
+    destinationGateId,
     shipProfileId,
     departureCoordinateTime,
-    distance,
+    arrivalCoordinateTime: arrivalIntercept.coordinateTime,
+    distance: meters(cruiseSpeed.value * duration),
     cruiseSpeed,
+    cruiseVelocity: cruiseVelocityVector,
+    departurePosition: departure.position,
+    departureVelocity: departure.velocity,
+    arrivalPosition: arrivalIntercept.position,
+    arrivalVelocity: arrivalIntercept.velocity,
+    arrivalIntercept,
     phases,
     events,
-    total: arrival,
-    totalClusterCoordinateTime: arrival.clusterCoordinateTime,
-    totalShipProperTime: arrival.shipProperTime,
-    totalAgingDifference: arrival.agingDifference,
+    total: arrivalReading,
+    totalClusterCoordinateTime: arrivalReading.clusterCoordinateTime,
+    totalShipProperTime: arrivalReading.shipProperTime,
+    totalAgingDifference: arrivalReading.agingDifference,
   });
 }
 
 /**
- * Simulates one fixed-gate Interstellar Cruise through the public Journey Model seam.
+ * Simulates one Interstellar Cruise through the public Journey Model seam.
  *
- * The endpoint Gates must be the paired members of one Gate Connection and stationary in the
- * Cluster Frame. Gate transitions are ZPZ-protected zero-duration phases. The cruise travels at
- * exactly `0.999c`; its Ship Proper Time is derived from the special-relativistic Lorentz factor.
+ * The endpoint Gates must be the paired members of one Gate Connection. Their worldlines are
+ * evaluated at the requested departure epoch, and a bracketed numerical solve finds the earliest
+ * future time at which a straight-line ship trajectory at exactly `0.999c` intersects the
+ * destination Gate. Gate transitions remain ZPZ-protected zero-duration events; the arrival
+ * transition leaves the ship with the destination Gate's instantaneous orbital velocity.
  *
  * @param scenario - The immutable, previously compiled Scenario to simulate.
  * @param request - An unknown request value validated at this model boundary.
@@ -551,86 +909,113 @@ export function simulateJourney(
     );
   }
 
-  if (departureGate !== undefined && destinationGate !== undefined) {
-    const departureSpeed = gateSpeed(departureGate);
-    const destinationSpeed = gateSpeed(destinationGate);
-    if (
-      !Number.isFinite(departureSpeed) ||
-      !Number.isFinite(destinationSpeed) ||
-      departureSpeed >= SPEED_OF_LIGHT.value ||
-      destinationSpeed >= SPEED_OF_LIGHT.value
-    ) {
-      addIssue(
-        issues,
-        "invalid-speed",
-        "gates.velocityAtEpoch",
-        "Fixed-gate simulation requires endpoint Gate velocities below the speed of light.",
-        "gate",
-        departureGate.id,
-        destinationGate.id,
-      );
-    }
-    if (departureSpeed !== 0) {
-      addIssue(
-        issues,
-        "non-stationary-gate",
-        "request.departureGateId",
-        `Departure Gate ${departureGate.id} must be stationary in the Cluster Frame.`,
-        "gate",
-        departureGate.id,
-        undefined,
-      );
-    }
-    if (destinationSpeed !== 0) {
-      addIssue(
-        issues,
-        "non-stationary-gate",
-        "request.destinationGateId",
-        `Destination Gate ${destinationGate.id} must be stationary in the Cluster Frame.`,
-        "gate",
-        destinationGate.id,
-        undefined,
-      );
-    }
-
-    const distanceValue = gateDistance(departureGate, destinationGate);
-    if (!Number.isFinite(distanceValue) || distanceValue <= 0) {
-      addIssue(
-        issues,
-        "invalid-distance",
-        "gates.positionAtEpoch",
-        "Fixed-gate simulation requires a finite, positive endpoint distance.",
-        "gate",
-        departureGate.id,
-        destinationGate.id,
-      );
-    }
-
-    if (issues.length === 0 && departureCoordinateTime !== undefined && cruiseSpeed !== undefined) {
-      const distance = meters(distanceValue);
-      const resultTimeline = timeline(
-        departureGate,
-        destinationGate,
-        shipProfileId as StableId,
-        departureCoordinateTime,
-        distance,
-        cruiseSpeed,
-      );
-      if (
-        !Number.isFinite(resultTimeline.totalClusterCoordinateTime.value) ||
-        !Number.isFinite(resultTimeline.totalShipProperTime.value)
-      ) {
+  if (
+    issues.length === 0 &&
+    departureGate !== undefined &&
+    destinationGate !== undefined &&
+    departureCoordinateTime !== undefined &&
+    cruiseSpeed !== undefined
+  ) {
+    const departureWorldline = evaluateGateWorldline(
+      scenario,
+      departureGate.id,
+      departureCoordinateTime,
+    );
+    if (!departureWorldline.ok) {
+      addWorldlineIssues(departureWorldline.issues, issues);
+    } else {
+      const departureSpeed = vectorMagnitude(numericVelocity(departureWorldline.state.velocity));
+      if (!Number.isFinite(departureSpeed) || departureSpeed >= SPEED_OF_LIGHT.value) {
         addIssue(
           issues,
-          "invalid-distance",
-          "gates.positionAtEpoch",
-          "Fixed-gate simulation produced a non-finite elapsed time.",
+          "invalid-speed",
+          `gates.${departureGate.id}.velocity`,
+          "Departure Gate velocity must be finite and below the speed of light.",
           "gate",
           departureGate.id,
-          destinationGate.id,
+          undefined,
         );
+      }
+
+      const destinationAtEpoch = evaluateGateWorldline(
+        scenario,
+        destinationGate.id,
+        departureCoordinateTime,
+      );
+      if (!destinationAtEpoch.ok) {
+        addWorldlineIssues(destinationAtEpoch.issues, issues);
       } else {
-        return Object.freeze({ ok: true as const, timeline: resultTimeline, issues: [] as const });
+        const destinationSpeed = vectorMagnitude(
+          numericVelocity(destinationAtEpoch.state.velocity),
+        );
+        if (!Number.isFinite(destinationSpeed) || destinationSpeed >= SPEED_OF_LIGHT.value) {
+          addIssue(
+            issues,
+            "invalid-speed",
+            `gates.${destinationGate.id}.velocity`,
+            "Destination Gate velocity must be finite and below the speed of light.",
+            "gate",
+            destinationGate.id,
+            undefined,
+          );
+        }
+      }
+
+      if (issues.length === 0) {
+        const departurePosition = numericPosition(departureWorldline.state.position);
+        const solvedIntercept = intercept(
+          scenario,
+          destinationGate.id,
+          departurePosition,
+          departureCoordinateTime,
+          cruiseSpeed,
+          issues,
+        );
+        if (solvedIntercept !== undefined && issues.length === 0) {
+          const arrivalSpeed = vectorMagnitude(numericVelocity(solvedIntercept.target.velocity));
+          if (!Number.isFinite(arrivalSpeed) || arrivalSpeed >= SPEED_OF_LIGHT.value) {
+            addIssue(
+              issues,
+              "invalid-speed",
+              `gates.${destinationGate.id}.arrivalVelocity`,
+              "Destination Gate velocity at the Arrival Intercept must be finite and below the speed of light.",
+              "gate",
+              destinationGate.id,
+              undefined,
+            );
+          } else {
+            const resultTimeline = timeline(
+              departureGate.id,
+              destinationGate.id,
+              shipProfileId as StableId,
+              departureCoordinateTime,
+              departureWorldline.state,
+              cruiseSpeed,
+              solvedIntercept,
+            );
+            if (
+              !Number.isFinite(resultTimeline.totalClusterCoordinateTime.value) ||
+              !Number.isFinite(resultTimeline.totalShipProperTime.value) ||
+              !Number.isFinite(resultTimeline.arrivalIntercept.positionResidual.value)
+            ) {
+              addIssue(
+                issues,
+                "non-finite-worldline",
+                `gates.${destinationGate.id}`,
+                "Interstellar Cruise produced a non-finite elapsed time or arrival residual.",
+                "gate",
+                destinationGate.id,
+                undefined,
+              );
+            } else {
+              return Object.freeze({
+                ok: true as const,
+                timeline: resultTimeline,
+                issues: [] as const,
+              });
+            }
+          }
+        }
       }
     }
   }
@@ -639,7 +1024,7 @@ export function simulateJourney(
 }
 
 /**
- * Simulates the fixed-gate cruise under the explicit name used by the initial physics milestone.
+ * Simulates an Interstellar Cruise under the explicit name used by the initial physics milestone.
  *
  * @param scenario - The immutable compiled Scenario containing the endpoint Gates.
  * @param request - The fixed-gate cruise request to validate and simulate.

@@ -1,5 +1,10 @@
 import {
   SPEED_OF_LIGHT,
+  meters,
+  metersCubedPerSecondSquared,
+  type GravitationalParameter,
+  type Kilograms,
+  type Meters,
   type MetersPerSecond,
   type MetersPerSecondSquared,
   type PositionVector,
@@ -10,6 +15,7 @@ import {
   type Vector3,
   type VelocityVector,
 } from "./quantities";
+import { evaluateScenarioWorldlines as resolveScenarioWorldlines } from "./orbital";
 import { simulateJourney } from "./simulation";
 import type { JourneySimulationResult } from "./simulation";
 
@@ -57,6 +63,49 @@ export type DomainEntityType =
 export type OrbitalAnchorKind = "star" | "planet" | "moon" | "barycenter";
 
 /**
+ * Keplerian orbital elements supplied at the Scenario epoch.
+ *
+ * Angles and mean anomaly are expressed in radians. The standard gravitational parameter may be
+ * supplied as a tagged SI quantity, a numeric SI value for decoded JSON compatibility, or derived
+ * from `centralMass` when the source provides a mass instead.
+ */
+export type KeplerianOrbitInput = {
+  readonly semiMajorAxis: Meters;
+  readonly eccentricity: number;
+  readonly inclination: number;
+  readonly longitudeOfAscendingNode: number;
+  readonly argumentOfPeriapsis: number;
+  readonly meanAnomalyAtEpoch: number;
+  readonly gravitationalParameter?: GravitationalParameter | number | undefined;
+  readonly standardGravitationalParameter?: GravitationalParameter | number | undefined;
+  readonly mu?: GravitationalParameter | number | undefined;
+  readonly centralMass?: Kilograms | number | undefined;
+};
+
+/**
+ * Alias for callers that use the domain term Orbital Elements.
+ */
+export type OrbitalElementsInput = KeplerianOrbitInput;
+
+/**
+ * Normalized Keplerian orbital elements stored in a Compiled Scenario.
+ */
+export type CompiledKeplerianOrbit = {
+  readonly semiMajorAxis: Meters;
+  readonly eccentricity: number;
+  readonly inclination: number;
+  readonly longitudeOfAscendingNode: number;
+  readonly argumentOfPeriapsis: number;
+  readonly meanAnomalyAtEpoch: number;
+  readonly gravitationalParameter: GravitationalParameter;
+};
+
+/**
+ * Alias for the normalized Orbital Elements representation.
+ */
+export type CompiledOrbitalElements = CompiledKeplerianOrbit;
+
+/**
  * A scenario-relative epoch label and its Cluster Coordinate Time origin.
  */
 export type ScenarioEpoch = {
@@ -87,6 +136,8 @@ export type OrbitalAnchorInput = {
   readonly parentId: string | undefined;
   readonly positionAtEpoch: PositionVector;
   readonly velocityAtEpoch: VelocityVector;
+  readonly orbitalElements?: KeplerianOrbitInput | undefined;
+  readonly orbit?: KeplerianOrbitInput | undefined;
 };
 
 /**
@@ -100,6 +151,8 @@ export type GateInput = {
   readonly orbitalAnchorId: string;
   readonly positionAtEpoch: PositionVector;
   readonly velocityAtEpoch: VelocityVector;
+  readonly orbitalElements?: KeplerianOrbitInput | undefined;
+  readonly orbit?: KeplerianOrbitInput | undefined;
 };
 
 /**
@@ -151,19 +204,27 @@ export type CompiledSystem = Omit<SystemInput, "id"> & {
 /**
  * An Orbital Anchor after all identifiers, quantities, and references have been validated.
  */
-export type CompiledOrbitalAnchor = Omit<OrbitalAnchorInput, "id" | "systemId" | "parentId"> & {
+export type CompiledOrbitalAnchor = Omit<
+  OrbitalAnchorInput,
+  "id" | "systemId" | "parentId" | "orbitalElements" | "orbit"
+> & {
   readonly id: StableId;
   readonly systemId: StableId;
   readonly parentId: StableId | undefined;
+  readonly orbitalElements: CompiledKeplerianOrbit | undefined;
 };
 
 /**
  * A Gate of Heaven after all identifiers, quantities, and references have been validated.
  */
-export type CompiledGate = Omit<GateInput, "id" | "systemId" | "orbitalAnchorId"> & {
+export type CompiledGate = Omit<
+  GateInput,
+  "id" | "systemId" | "orbitalAnchorId" | "orbitalElements" | "orbit"
+> & {
   readonly id: StableId;
   readonly systemId: StableId;
   readonly orbitalAnchorId: StableId;
+  readonly orbitalElements: CompiledKeplerianOrbit | undefined;
 };
 
 /**
@@ -236,7 +297,8 @@ export type ValidationIssueCode =
   | "duplicate-id"
   | "broken-reference"
   | "invalid-gate-pairing"
-  | "orbital-cycle";
+  | "orbital-cycle"
+  | "invalid-orbital-elements";
 
 /**
  * A structured explanation of one invalid Scenario input.
@@ -348,12 +410,96 @@ export type ScenarioInspection = {
 };
 
 /**
+ * The resolved worldline of one Orbital Anchor at a scenario-relative epoch.
+ */
+export type OrbitalAnchorWorldline = {
+  readonly id: StableId;
+  readonly systemId: StableId;
+  readonly parentId: StableId | undefined;
+  readonly coordinateTime: Seconds;
+  readonly position: PositionVector;
+  readonly velocity: VelocityVector;
+};
+
+/**
+ * The resolved worldline of one Gate of Heaven at a scenario-relative epoch.
+ */
+export type GateWorldline = {
+  readonly id: StableId;
+  readonly systemId: StableId;
+  readonly orbitalAnchorId: StableId;
+  readonly coordinateTime: Seconds;
+  readonly position: PositionVector;
+  readonly velocity: VelocityVector;
+};
+
+/**
+ * All route-relevant Orbital Anchor and Gate states at one scenario-relative epoch.
+ */
+export type ScenarioWorldlines = {
+  readonly coordinateTime: Seconds;
+  readonly orbitalAnchors: readonly OrbitalAnchorWorldline[];
+  readonly gates: readonly GateWorldline[];
+};
+
+/**
+ * Structured failure categories returned by worldline evaluation.
+ */
+export type WorldlineIssueCode =
+  | "invalid-coordinate-time"
+  | "invalid-orbital-elements"
+  | "non-convergent-orbit"
+  | "non-finite-worldline";
+
+/**
+ * A structured explanation of one worldline evaluation failure.
+ */
+export type WorldlineIssue = {
+  readonly code: WorldlineIssueCode;
+  readonly path: string;
+  readonly message: string;
+  readonly entityType: "orbital-anchor" | "gate";
+  readonly entityId: StableId;
+};
+
+/**
+ * A successful worldline evaluation result.
+ */
+export type ScenarioWorldlineSuccess = {
+  readonly ok: true;
+  readonly worldlines: ScenarioWorldlines;
+  readonly orbitalAnchors: readonly OrbitalAnchorWorldline[];
+  readonly gates: readonly GateWorldline[];
+  readonly issues: readonly [];
+};
+
+/**
+ * An unsuccessful worldline evaluation result.
+ */
+export type ScenarioWorldlineFailure = {
+  readonly ok: false;
+  readonly worldlines: undefined;
+  readonly orbitalAnchors: readonly [];
+  readonly gates: readonly [];
+  readonly issues: readonly WorldlineIssue[];
+};
+
+/**
+ * The discriminated result returned by worldline evaluation.
+ */
+export type ScenarioWorldlineResult = ScenarioWorldlineSuccess | ScenarioWorldlineFailure;
+
+/**
  * The framework-independent interface for the initial Journey Model module.
  */
 export type JourneyModel = {
   readonly compileScenario: (input: unknown) => CompileScenarioResult;
   readonly inspectScenario: (scenario: CompiledScenario) => ScenarioInspection;
   readonly formatScenarioInspection: (inspection: ScenarioInspection) => string;
+  readonly evaluateWorldlines: (
+    scenario: CompiledScenario,
+    coordinateTime: Seconds,
+  ) => ScenarioWorldlineResult;
   readonly simulateJourney: (
     scenario: CompiledScenario,
     request: unknown,
@@ -715,6 +861,239 @@ function readMaximumSublightSpeed(
   return quantityValue;
 }
 
+const GRAVITATIONAL_CONSTANT = 6.6743e-11;
+
+function addOrbitalElementsIssue(
+  issues: ValidationIssue[],
+  path: string,
+  message: string,
+  entityType: DomainEntityType,
+  entityId: string | undefined,
+): void {
+  addIssue(issues, "invalid-orbital-elements", path, message, entityType, entityId, undefined);
+}
+
+function readOrbitalScalar(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+  entityType: DomainEntityType,
+  entityId: string | undefined,
+): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (
+    isRecord(value) &&
+    value.unit === "rad" &&
+    typeof value.value === "number" &&
+    Number.isFinite(value.value)
+  ) {
+    return value.value;
+  }
+
+  addOrbitalElementsIssue(
+    issues,
+    path,
+    `${path} must be a finite angle in radians.`,
+    entityType,
+    entityId,
+  );
+  return undefined;
+}
+
+function readOrbitalQuantity(
+  value: unknown,
+  expectedUnit: "m" | "kg" | "m^3/s^2",
+  path: string,
+  issues: ValidationIssue[],
+  entityType: DomainEntityType,
+  entityId: string | undefined,
+): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (
+    isRecord(value) &&
+    value.unit === expectedUnit &&
+    typeof value.value === "number" &&
+    Number.isFinite(value.value)
+  ) {
+    return value.value;
+  }
+
+  addOrbitalElementsIssue(
+    issues,
+    path,
+    `${path} must be a finite SI quantity with unit ${expectedUnit}.`,
+    entityType,
+    entityId,
+  );
+  return undefined;
+}
+
+function readOrbitalElements(
+  record: RecordValue,
+  path: string,
+  issues: ValidationIssue[],
+  entityType: DomainEntityType,
+  entityId: string | undefined,
+): CompiledKeplerianOrbit | undefined {
+  const hasOrbitalElements =
+    hasOwn(record, "orbitalElements") && record.orbitalElements !== undefined;
+  const hasOrbit = hasOwn(record, "orbit") && record.orbit !== undefined;
+  if (!hasOrbitalElements && !hasOrbit) {
+    return undefined;
+  }
+  if (hasOrbitalElements && hasOrbit) {
+    addOrbitalElementsIssue(
+      issues,
+      path,
+      `${path} must provide only one of orbitalElements or orbit.`,
+      entityType,
+      entityId,
+    );
+  }
+
+  const elementsKey = hasOrbitalElements ? "orbitalElements" : "orbit";
+  const elementsPath = `${path}.${elementsKey}`;
+  const elements = record[elementsKey];
+  if (!isRecord(elements)) {
+    addOrbitalElementsIssue(
+      issues,
+      elementsPath,
+      `${elementsPath} must be an object.`,
+      entityType,
+      entityId,
+    );
+    return undefined;
+  }
+
+  const semiMajorAxis = readOrbitalQuantity(
+    elements.semiMajorAxis,
+    "m",
+    `${elementsPath}.semiMajorAxis`,
+    issues,
+    entityType,
+    entityId,
+  );
+  const eccentricity = readOrbitalScalar(
+    elements.eccentricity,
+    `${elementsPath}.eccentricity`,
+    issues,
+    entityType,
+    entityId,
+  );
+  const inclination = readOrbitalScalar(
+    elements.inclination,
+    `${elementsPath}.inclination`,
+    issues,
+    entityType,
+    entityId,
+  );
+  const longitudeOfAscendingNode = readOrbitalScalar(
+    elements.longitudeOfAscendingNode,
+    `${elementsPath}.longitudeOfAscendingNode`,
+    issues,
+    entityType,
+    entityId,
+  );
+  const argumentOfPeriapsis = readOrbitalScalar(
+    elements.argumentOfPeriapsis,
+    `${elementsPath}.argumentOfPeriapsis`,
+    issues,
+    entityType,
+    entityId,
+  );
+  const meanAnomalyAtEpoch = readOrbitalScalar(
+    elements.meanAnomalyAtEpoch,
+    `${elementsPath}.meanAnomalyAtEpoch`,
+    issues,
+    entityType,
+    entityId,
+  );
+
+  const gravitationalParameterValue =
+    elements.gravitationalParameter ?? elements.standardGravitationalParameter ?? elements.mu;
+  let gravitationalParameter: number | undefined;
+  if (gravitationalParameterValue !== undefined) {
+    gravitationalParameter = readOrbitalQuantity(
+      gravitationalParameterValue,
+      "m^3/s^2",
+      `${elementsPath}.gravitationalParameter`,
+      issues,
+      entityType,
+      entityId,
+    );
+  } else if (elements.centralMass !== undefined) {
+    const centralMass = readOrbitalQuantity(
+      elements.centralMass,
+      "kg",
+      `${elementsPath}.centralMass`,
+      issues,
+      entityType,
+      entityId,
+    );
+    gravitationalParameter =
+      centralMass === undefined ? undefined : centralMass * GRAVITATIONAL_CONSTANT;
+  } else {
+    addOrbitalElementsIssue(
+      issues,
+      `${elementsPath}.gravitationalParameter`,
+      `${elementsPath} must provide gravitationalParameter, standardGravitationalParameter, mu, or centralMass.`,
+      entityType,
+      entityId,
+    );
+  }
+
+  if (
+    semiMajorAxis === undefined ||
+    eccentricity === undefined ||
+    inclination === undefined ||
+    longitudeOfAscendingNode === undefined ||
+    argumentOfPeriapsis === undefined ||
+    meanAnomalyAtEpoch === undefined ||
+    gravitationalParameter === undefined
+  ) {
+    return undefined;
+  }
+
+  if (semiMajorAxis <= 0 || gravitationalParameter <= 0) {
+    addOrbitalElementsIssue(
+      issues,
+      elementsPath,
+      `${elementsPath} requires positive semiMajorAxis and gravitationalParameter.`,
+      entityType,
+      entityId,
+    );
+  }
+  if (eccentricity < 0 || eccentricity >= 1) {
+    addOrbitalElementsIssue(
+      issues,
+      `${elementsPath}.eccentricity`,
+      `${elementsPath}.eccentricity must be in the elliptic range [0, 1).`,
+      entityType,
+      entityId,
+    );
+  }
+
+  if (semiMajorAxis <= 0 || gravitationalParameter <= 0 || eccentricity < 0 || eccentricity >= 1) {
+    return undefined;
+  }
+
+  return Object.freeze({
+    semiMajorAxis: meters(semiMajorAxis),
+    eccentricity,
+    inclination,
+    longitudeOfAscendingNode,
+    argumentOfPeriapsis,
+    meanAnomalyAtEpoch,
+    gravitationalParameter: metersCubedPerSecondSquared(gravitationalParameter),
+  });
+}
+
 function readEpoch(record: RecordValue, issues: ValidationIssue[]): ScenarioEpoch | undefined {
   const epochRecord = readRecord(record, "epoch", "epoch", issues, "scenario", undefined);
   if (epochRecord === undefined) {
@@ -905,6 +1284,30 @@ function validateAnchorReferences(
 
   for (const anchor of anchors) {
     visit(anchor);
+  }
+}
+
+function validateStationarySystems(
+  systems: readonly CompiledSystem[],
+  issues: ValidationIssue[],
+): void {
+  for (const [index, system] of systems.entries()) {
+    const speed = Math.hypot(
+      system.velocityAtEpoch.x.value,
+      system.velocityAtEpoch.y.value,
+      system.velocityAtEpoch.z.value,
+    );
+    if (speed !== 0) {
+      addIssue(
+        issues,
+        "invalid-value",
+        `systems[${index}].velocityAtEpoch`,
+        `System ${system.id} must be stationary in the Cluster Frame; its epoch velocity must be zero.`,
+        "system",
+        system.id,
+        undefined,
+      );
+    }
   }
 }
 
@@ -1244,6 +1647,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       "orbital-anchor",
       idValue,
     ) as VelocityVector | undefined;
+    const orbitalElements = readOrbitalElements(raw, path, issues, "orbital-anchor", idValue);
 
     if (
       id !== undefined &&
@@ -1264,6 +1668,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
           parentId: parentIdValue === undefined ? undefined : asStableId(parentIdValue),
           positionAtEpoch,
           velocityAtEpoch,
+          orbitalElements,
         }),
       );
     }
@@ -1327,6 +1732,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       "gate",
       idValue,
     ) as VelocityVector | undefined;
+    const orbitalElements = readOrbitalElements(raw, path, issues, "gate", idValue);
 
     if (
       id !== undefined &&
@@ -1346,6 +1752,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
           orbitalAnchorId: asStableId(orbitalAnchorIdValue),
           positionAtEpoch,
           velocityAtEpoch,
+          orbitalElements,
         }),
       );
     }
@@ -1511,6 +1918,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
   const anchorById = new Map(sortedAnchors.map((anchor) => [anchor.id, anchor]));
   const gateById = new Map(sortedGates.map((gate) => [gate.id, gate]));
 
+  validateStationarySystems(sortedSystems, issues);
   validateAnchorReferences(sortedAnchors, systemById, issues);
   validateGateReferences(sortedGates, systemById, anchorById, issues);
   validateGateConnections(sortedGates, sortedConnections, issues);
@@ -1623,6 +2031,29 @@ export function inspectScenario(scenario: CompiledScenario): ScenarioInspection 
   });
 }
 
+/**
+ * Resolves all route-relevant Orbital Anchor and Gate worldlines at a scenario-relative epoch.
+ *
+ * @param scenario - The immutable compiled Scenario to evaluate.
+ * @param coordinateTime - The absolute Cluster Coordinate Time at which states are requested.
+ * @returns Immutable worldline states or structured numerical diagnostics.
+ */
+export function evaluateWorldlines(
+  scenario: CompiledScenario,
+  coordinateTime: Seconds,
+): ScenarioWorldlineResult {
+  return resolveScenarioWorldlines(scenario, coordinateTime);
+}
+
+/**
+ * Alias for evaluating a Scenario's route-relevant worldlines at an arbitrary epoch.
+ *
+ * @param scenario - The immutable compiled Scenario to evaluate.
+ * @param coordinateTime - The absolute Cluster Coordinate Time at which states are requested.
+ * @returns Immutable worldline states or structured numerical diagnostics.
+ */
+export const inspectScenarioAtTime = evaluateWorldlines;
+
 function quantityText(quantityValue: SIQuantity<SIUnit>): string {
   return `${quantityValue.value} ${quantityValue.unit}`;
 }
@@ -1677,13 +2108,14 @@ export function formatScenarioInspection(inspection: ScenarioInspection): string
  * The current implementation is stateless: all Scenario data is supplied to each operation and
  * all results are returned as immutable values.
  *
- * @returns A Journey Model adapter exposing compilation, inspection, and fixed-gate simulation operations.
+ * @returns A Journey Model adapter exposing compilation, inspection, worldline evaluation, and cruise simulation operations.
  */
 export function createJourneyModel(): JourneyModel {
   return Object.freeze({
     compileScenario,
     inspectScenario,
     formatScenarioInspection,
+    evaluateWorldlines,
     simulateJourney,
   });
 }

@@ -1,7 +1,7 @@
 /**
  * SI units accepted by the Journey Model's physical quantity types.
  */
-export type SIUnit = "m" | "m/s" | "m/s^2" | "s" | "kg";
+export type SIUnit = "m" | "m/s" | "m/s^2" | "s" | "kg" | "m^3/s^2";
 
 declare const siValueBrand: unique symbol;
 
@@ -48,6 +48,11 @@ export type Seconds = SIQuantity<"s">;
  * A mass measured in kilograms.
  */
 export type Kilograms = SIQuantity<"kg">;
+
+/**
+ * A standard gravitational parameter measured in cubic metres per second squared.
+ */
+export type GravitationalParameter = SIQuantity<"m^3/s^2">;
 
 /**
  * A three-dimensional vector whose components share one SI unit.
@@ -131,6 +136,17 @@ export function metersPerSecondSquared(value: number): MetersPerSecondSquared {
  */
 export function seconds(value: number): Seconds {
   return quantity("s", value);
+}
+
+/**
+ * Creates a finite standard gravitational parameter quantity.
+ *
+ * @param value - The gravitational parameter in m^3/s^2.
+ * @returns A runtime-tagged, compile-time-branded gravitational parameter quantity.
+ * @throws RangeError when `value` is not finite.
+ */
+export function metersCubedPerSecondSquared(value: number): GravitationalParameter {
+  return quantity("m^3/s^2", value);
 }
 
 /**

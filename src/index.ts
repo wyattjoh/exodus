@@ -1,6 +1,7 @@
 export {
   kilograms,
   meters,
+  metersCubedPerSecondSquared,
   metersPerSecond,
   metersPerSecondSquared,
   seconds,
@@ -8,6 +9,7 @@ export {
   vector3,
 } from "./quantities";
 export type {
+  GravitationalParameter,
   Kilograms,
   Meters,
   MetersPerSecond,
@@ -23,8 +25,10 @@ export type {
 export {
   compileScenario,
   createJourneyModel,
+  evaluateWorldlines,
   formatScenarioInspection,
   inspectScenario,
+  inspectScenarioAtTime,
   stableId,
 } from "./model";
 export type {
@@ -58,13 +62,31 @@ export type {
   SystemInspection,
   ValidationIssue,
   ValidationIssueCode,
+  CompiledKeplerianOrbit,
+  CompiledOrbitalElements,
+  GateWorldline,
+  KeplerianOrbitInput,
+  OrbitalAnchorWorldline,
+  OrbitalElementsInput,
+  ScenarioWorldlineFailure,
+  ScenarioWorldlineResult,
+  ScenarioWorldlineSuccess,
+  ScenarioWorldlines,
+  WorldlineIssue,
+  WorldlineIssueCode,
 } from "./model";
 export {
+  INTERCEPT_MAX_SEARCH_SECONDS,
+  INTERCEPT_POSITION_RESIDUAL_FACTOR,
+  INTERCEPT_POSITION_RESIDUAL_TOLERANCE,
+  INTERCEPT_TIME_RESIDUAL_TOLERANCE,
   INTERSTELLAR_CRUISE_SPEED,
   simulateFixedGateCruise,
   simulateJourney,
 } from "./simulation";
+export { evaluateGateWorldline, evaluateScenarioWorldlines } from "./orbital";
 export type {
+  ArrivalIntercept,
   FixedGateCruiseRequest,
   JourneyClockReading,
   JourneyEventKind,

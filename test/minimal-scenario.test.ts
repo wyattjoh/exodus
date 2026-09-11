@@ -127,6 +127,28 @@ describe("Journey Model Scenario seam", () => {
     }
   });
 
+  test("rejects a moving System center in the Cluster Frame", () => {
+    const result = compileScenario({
+      ...minimalScenario,
+      systems: [
+        {
+          ...at(minimalScenario.systems, 0),
+          velocityAtEpoch: {
+            x: { value: 1, unit: "m/s" },
+            y: { value: 0, unit: "m/s" },
+            z: { value: 0, unit: "m/s" },
+          },
+        },
+        at(minimalScenario.systems, 1),
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.some((issue) => issue.code === "invalid-value")).toBe(true);
+    }
+  });
+
   test("reports an invalid Gate pairing for two Gates in one System", () => {
     const destinationGate = at(minimalScenario.gates, 1);
     const scenario: ScenarioInput = {
@@ -195,6 +217,7 @@ describe("Journey Model Scenario seam", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(model.inspectScenario(result.scenario).scenarioId).toBe("scenario:minimal");
+      expect(model.evaluateWorldlines(result.scenario, seconds(0)).ok).toBe(true);
     }
   });
 });

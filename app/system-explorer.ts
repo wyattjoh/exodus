@@ -8,6 +8,7 @@ import {
   type JourneyEventKind,
   type JourneyModel,
   type JourneyPhaseKind,
+  type JourneySample,
   type MultiLegJourneyPhase,
   type MultiLegJourneyTimeline,
   type OrbitalAnchorWorldline,
@@ -344,6 +345,11 @@ export type SystemExplorerJourneyScrub = {
   readonly phase: MultiLegJourneyPhase | undefined;
   readonly event: MultiLegJourneyTimeline["events"][number] | undefined;
   readonly clocks: JourneyClockReading;
+  readonly shipPosition: PositionVector | undefined;
+  readonly shipVelocity: VelocityVector | undefined;
+  readonly view: "cluster" | "system" | undefined;
+  readonly provenance: JourneySample["provenance"] | undefined;
+  readonly uncertainty: JourneySample["uncertainty"] | undefined;
 };
 
 /**
@@ -421,6 +427,8 @@ export type SystemExplorerScene = {
   readonly journey: MultiLegJourneyTimeline | undefined;
   readonly phases: readonly SystemExplorerPhaseDescription[];
   readonly activeJourney: SystemExplorerJourneyScrub | undefined;
+  readonly shipPosition: PositionVector | undefined;
+  readonly shipVelocity: VelocityVector | undefined;
   readonly trajectory: SystemExplorerTransferTrajectory | undefined;
   readonly issues: readonly WorldlineIssue[];
 };
@@ -447,6 +455,7 @@ export type BuildSystemExplorerSceneOptions = {
   readonly selectedGateIds: readonly StableId[] | undefined;
   readonly orbitSampleCount: number | undefined;
   readonly timelineEventIndex: number | undefined;
+  readonly journeySample?: JourneySample | undefined;
 };
 
 function freezeVector(x: number, y: number, z: number): SystemExplorerVector3 {
@@ -729,6 +738,11 @@ function emptyJourneyScrub(timeline: MultiLegJourneyTimeline): SystemExplorerJou
     phase,
     event: undefined,
     clocks: phase?.start ?? zeroJourneyClockReading(),
+    shipPosition: phase?.startPosition,
+    shipVelocity: phase?.startVelocity,
+    view: undefined,
+    provenance: undefined,
+    uncertainty: undefined,
   });
 }
 
@@ -749,6 +763,11 @@ function scrubJourneyBoundary(
     phase: boundary.phase,
     event: undefined,
     clocks: boundary.clocks,
+    shipPosition: boundary.phase.startPosition,
+    shipVelocity: boundary.phase.startVelocity,
+    view: undefined,
+    provenance: undefined,
+    uncertainty: undefined,
   });
 }
 
@@ -818,6 +837,28 @@ export function scrubJourneyEvent(
     phase: phaseIndex === undefined ? undefined : timeline.phases[phaseIndex],
     event,
     clocks: event.clocks,
+    shipPosition: event.position,
+    shipVelocity: event.velocity,
+    view: undefined,
+    provenance: undefined,
+    uncertainty: undefined,
+  });
+}
+
+function scrubJourneySample(sample: JourneySample): SystemExplorerJourneyScrub {
+  return Object.freeze({
+    coordinateTime: sample.coordinateTime,
+    relativeCoordinateTime: sample.clocks.clusterCoordinateTime,
+    eventIndex: sample.eventIndex,
+    phaseIndex: sample.phaseIndex,
+    phase: sample.phase,
+    event: sample.event,
+    clocks: sample.clocks,
+    shipPosition: sample.shipPosition,
+    shipVelocity: sample.shipVelocity,
+    view: sample.view,
+    provenance: sample.provenance,
+    uncertainty: sample.uncertainty,
   });
 }
 
@@ -1203,6 +1244,8 @@ function emptyScene(
     journey,
     phases,
     activeJourney,
+    shipPosition: activeJourney?.shipPosition,
+    shipVelocity: activeJourney?.shipVelocity,
     trajectory: undefined,
     issues: Object.freeze([...issues]),
   });
@@ -1232,11 +1275,13 @@ export function buildSystemExplorerScene(
       ? Object.freeze([])
       : Object.freeze(journey.phases.map((phase) => describeJourneyPhase(phase, journey)));
   const activeJourney =
-    journey === undefined
-      ? undefined
-      : options.timelineEventIndex === undefined
-        ? scrubJourneyTimeline(journey, requestedCoordinateTime)
-        : scrubJourneyEvent(journey, options.timelineEventIndex);
+    options.journeySample !== undefined
+      ? scrubJourneySample(options.journeySample)
+      : journey === undefined
+        ? undefined
+        : options.timelineEventIndex === undefined
+          ? scrubJourneyTimeline(journey, requestedCoordinateTime)
+          : scrubJourneyEvent(journey, options.timelineEventIndex);
   const coordinateTime = activeJourney?.coordinateTime ?? requestedCoordinateTime;
   const origin =
     system?.positionAtEpoch ??
@@ -1374,6 +1419,10 @@ export function buildSystemExplorerScene(
     journey,
     phases,
     activeJourney,
+    shipPosition:
+      options.journeySample?.view === "cluster" ? undefined : activeJourney?.shipPosition,
+    shipVelocity:
+      options.journeySample?.view === "cluster" ? undefined : activeJourney?.shipVelocity,
     trajectory,
     issues: Object.freeze([]),
   });
@@ -1454,6 +1503,14 @@ export function buildSystemWebGpuRenderScene(scene: SystemExplorerScene): WebGpu
   for (const relationship of scene.gateOrbitRelationships) {
     connections.push(
       line(relationship.anchorPosition, relationship.gatePosition, lineColor("relationship")),
+    );
+  }
+  if (scene.shipPosition !== undefined) {
+    points.push(
+      Object.freeze({
+        position: scene.scale.toViewPosition(scene.shipPosition),
+        color: Object.freeze([0.98, 0.98, 1, 1]) as readonly [number, number, number, number],
+      }),
     );
   }
   const trajectory = scene.trajectory;

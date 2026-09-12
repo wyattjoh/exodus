@@ -170,6 +170,10 @@
   color: var(--red);
 }
 
+.journey-ship-key {
+  color: #f5f8ff;
+}
+
 .explorer-inspector {
   display: grid;
   align-content: start;

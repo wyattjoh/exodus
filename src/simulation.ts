@@ -9,11 +9,15 @@ import {
   type Seconds,
   type VelocityVector,
 } from "./quantities";
-import { evaluateGateWorldline } from "./orbital";
-import { simulateInSystemTransfer } from "./in-system-transfer";
+import {
+  evaluateGateWorldline,
+  evaluateScenarioWorldlines as resolveScenarioWorldlines,
+} from "./orbital";
+import { sampleInSystemTransferAt, simulateInSystemTransfer } from "./in-system-transfer";
 import type {
   InSystemTransferEvent,
   InSystemTransferRequest,
+  InSystemTransferSample,
   InSystemTransferSimulationResult,
   InSystemTransferTimeline,
 } from "./in-system-transfer";
@@ -25,11 +29,15 @@ import {
   vectorMagnitude,
 } from "./vector";
 import type {
+  CompiledGate,
+  CompiledGateConnection,
   CompiledScenario,
+  CompiledShipProfile,
   DomainEntityType,
   GateWorldline,
   ScenarioCanonicalClaim,
   ScenarioUncertainty,
+  ScenarioWorldlines,
   StableId,
   WorldlineIssue,
 } from "./model";
@@ -43,6 +51,7 @@ import {
   type CanonicalClaim,
   type ConservativeBounds,
   type DisplayPrecision,
+  type ProvenanceKind,
 } from "./provenance";
 
 const stableIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -321,6 +330,101 @@ export type MultiLegJourneyTimeline = {
   readonly displayPrecision: DisplayPrecision;
   readonly discrepancies: readonly CanonDiscrepancy<Seconds>[];
 };
+
+/**
+ * The presentation scale selected by an authoritative Journey sample.
+ */
+export type JourneySampleView = "cluster" | "system";
+
+/**
+ * Property-level source information attached to the active sampled phase.
+ */
+export type JourneySampleProvenance = {
+  readonly kinds: readonly ProvenanceKind[];
+  readonly authorities: readonly string[];
+  readonly notes: readonly string[];
+  readonly citations: readonly string[];
+};
+
+/**
+ * Secondary uncertainty information retained beside a nominal sampled state.
+ */
+export type JourneySampleUncertainty = {
+  readonly clockBounds: JourneyClockBounds;
+  readonly arrivalWindow: ConservativeBounds<Seconds>;
+  readonly hasUncertainty: boolean;
+  readonly sourcePaths: readonly string[];
+};
+
+/**
+ * Human-readable and inspectable details for the active Journey phase.
+ */
+export type JourneySamplePhaseDetails = {
+  readonly kind: JourneyPhaseKind;
+  readonly stepIndex: number;
+  readonly departureGateId: StableId;
+  readonly destinationGateId: StableId;
+  readonly startCoordinateTime: Seconds;
+  readonly endCoordinateTime: Seconds;
+  readonly nominalDuration: Seconds;
+  readonly nominalClocks: JourneyClockReading;
+  readonly bounds: JourneyPhaseBounds;
+  readonly provenance: JourneySampleProvenance;
+  readonly discrepancies: readonly CanonDiscrepancy<Seconds>[];
+};
+
+/**
+ * One immutable, model-owned state used by every Journey projection and playback update.
+ *
+ * `coordinateTime` is absolute Scenario Cluster Coordinate Time. `clocks.clusterCoordinateTime`
+ * remains the cumulative Journey-relative reading shown to the traveler.
+ */
+export type JourneySample = {
+  readonly kind: "journey-sample";
+  readonly timeline: MultiLegJourneyTimeline;
+  readonly coordinateTime: Seconds;
+  readonly phaseIndex: number | undefined;
+  readonly phase: MultiLegJourneyPhase | undefined;
+  readonly eventIndex: number | undefined;
+  readonly event: MultiLegJourneyTimelineEvent | undefined;
+  readonly view: JourneySampleView;
+  readonly shipPosition: PositionVector;
+  readonly shipVelocity: VelocityVector;
+  readonly worldlines: ScenarioWorldlines;
+  readonly clocks: JourneyClockReading;
+  readonly phaseDetails: JourneySamplePhaseDetails | undefined;
+  readonly provenance: JourneySampleProvenance;
+  readonly discrepancies: readonly CanonDiscrepancy<Seconds>[];
+  readonly uncertainty: JourneySampleUncertainty;
+};
+
+/**
+ * A successful Journey sample result.
+ */
+export type JourneySampleSuccess = {
+  readonly ok: true;
+  readonly state: JourneySample;
+  readonly issues: readonly [];
+};
+
+/**
+ * A failed Journey sample result with no partial physical state.
+ */
+export type JourneySampleFailure = {
+  readonly ok: false;
+  readonly state: undefined;
+  readonly issues: readonly SimulationIssue[];
+};
+
+/**
+ * The discriminated result returned by continuous Journey sampling.
+ */
+export type JourneySampleResult = JourneySampleSuccess | JourneySampleFailure;
+
+/**
+ * A direction used to walk the exact, ordered Journey event list.
+ */
+export type JourneyEventStepDirection = "next" | "previous";
 
 /**
  * The moving-Gate Interstellar Cruise request accepted at the Journey Model boundary.
@@ -2368,10 +2472,411 @@ export function simulateMultiLegJourney(
   return Object.freeze({ ok: true as const, timeline, issues: [] as const });
 }
 
+const SAMPLE_TIME_EPSILON = 1e-7;
+
+type SamplePhysicalState = {
+  readonly position: PositionVector;
+  readonly velocity: VelocityVector;
+  readonly shipProperTime: number;
+};
+
+function sampleIssueFromWorldline(issue: WorldlineIssue): SimulationIssue {
+  return Object.freeze({
+    code: issue.code,
+    path: issue.path,
+    message: issue.message,
+    entityType: issue.entityType,
+    entityId: issue.entityId,
+    relatedId: undefined,
+  });
+}
+
+function sampleFailure(issues: readonly SimulationIssue[]): JourneySampleFailure {
+  return Object.freeze({
+    ok: false as const,
+    state: undefined,
+    issues: Object.freeze([...issues].sort(issueComparator)),
+  });
+}
+
+function sampleProvenance(
+  scenario: CompiledScenario,
+  phase: MultiLegJourneyPhase | undefined,
+): JourneySampleProvenance {
+  const departureGateId = phase?.departureGateId;
+  const destinationGateId = phase?.destinationGateId;
+  const connection =
+    departureGateId === undefined || destinationGateId === undefined
+      ? undefined
+      : scenario.gateConnections.find(
+          (candidate) =>
+            (candidate.gateAId === departureGateId && candidate.gateBId === destinationGateId) ||
+            (candidate.gateAId === destinationGateId && candidate.gateBId === departureGateId),
+        );
+  const records = [
+    phase === undefined ? undefined : scenario.index.gates.get(phase.departureGateId),
+    phase === undefined ? undefined : scenario.index.gates.get(phase.destinationGateId),
+    connection,
+    scenario.index.shipProfiles.get(
+      phase?.cruise?.shipProfileId ??
+        phase?.transfer?.shipProfileId ??
+        phase?.dwell?.shipProfileId ??
+        ("" as StableId),
+    ),
+  ].filter(
+    (entity): entity is CompiledGate | CompiledGateConnection | CompiledShipProfile =>
+      entity !== undefined,
+  );
+  const provenanceRecords = records.flatMap((entity) => [
+    entity.canonicalIdentity.provenance,
+    entity.provenance,
+    ...Object.values(entity.properties).map((property) => property.provenance),
+  ]);
+  const unique = (values: readonly string[]): readonly string[] =>
+    Object.freeze([...new Set(values.filter((value) => value.length > 0))].sort());
+  return Object.freeze({
+    kinds: unique(provenanceRecords.map((record) => record.kind)) as readonly ProvenanceKind[],
+    authorities: unique(provenanceRecords.map((record) => record.authority)),
+    notes: unique(
+      provenanceRecords.flatMap((record) => (record.note === undefined ? [] : [record.note])),
+    ),
+    citations: unique(
+      provenanceRecords.flatMap((record) =>
+        record.citations.map((citation) => `${citation.source} · ${citation.locator}`),
+      ),
+    ),
+  });
+}
+
+function sampleEventIndex(
+  timeline: MultiLegJourneyTimeline,
+  coordinateTime: number,
+): number | undefined {
+  let result: number | undefined;
+  timeline.events.forEach((eventValue, index) => {
+    if (Math.abs(eventValue.coordinateTime.value - coordinateTime) <= SAMPLE_TIME_EPSILON) {
+      result = index;
+    }
+  });
+  return result;
+}
+
+function samplePhaseIndex(
+  timeline: MultiLegJourneyTimeline,
+  coordinateTime: number,
+  eventValue: MultiLegJourneyTimelineEvent | undefined,
+): number | undefined {
+  if (eventValue !== undefined) {
+    const eventPhaseIndex = timeline.phases.findIndex(
+      (phaseValue) =>
+        phaseValue.stepIndex === eventValue.stepIndex && phaseValue.kind === eventValue.phase,
+    );
+    if (eventPhaseIndex >= 0) {
+      return eventPhaseIndex;
+    }
+  }
+  const containing = timeline.phases.findIndex(
+    (phaseValue) =>
+      phaseValue.endCoordinateTime.value > phaseValue.startCoordinateTime.value &&
+      coordinateTime >= phaseValue.startCoordinateTime.value &&
+      coordinateTime < phaseValue.endCoordinateTime.value,
+  );
+  if (containing >= 0) {
+    return containing;
+  }
+  let ending: number | undefined;
+  timeline.phases.forEach((phaseValue, index) => {
+    if (Math.abs(phaseValue.endCoordinateTime.value - coordinateTime) <= SAMPLE_TIME_EPSILON) {
+      ending = index;
+    }
+  });
+  if (ending !== undefined) {
+    return ending;
+  }
+  let starting: number | undefined;
+  timeline.phases.forEach((phaseValue, index) => {
+    if (Math.abs(phaseValue.startCoordinateTime.value - coordinateTime) <= SAMPLE_TIME_EPSILON) {
+      starting = index;
+    }
+  });
+  return starting;
+}
+
+function phaseSampleState(
+  scenario: CompiledScenario,
+  phase: MultiLegJourneyPhase,
+  coordinateTime: number,
+  worldlines: ScenarioWorldlines,
+  issues: SimulationIssue[],
+): SamplePhysicalState | undefined {
+  const elapsed = Math.max(0, coordinateTime - phase.startCoordinateTime.value);
+  if (phase.kind === "interstellar-cruise" && phase.cruise !== undefined) {
+    const cruise = phase.cruise;
+    const clamped = Math.min(cruise.totalClusterCoordinateTime.value, elapsed);
+    const position = addVector(
+      numericPosition(cruise.departurePosition),
+      scaleVector(numericVelocity(cruise.cruiseVelocity), clamped),
+    );
+    const properRate = Math.sqrt(
+      Math.max(
+        0,
+        1 - (vectorMagnitude(numericVelocity(cruise.cruiseVelocity)) / SPEED_OF_LIGHT.value) ** 2,
+      ),
+    );
+    return {
+      position: vector(position),
+      velocity: cruise.cruiseVelocity,
+      shipProperTime: phase.start.shipProperTime.value + clamped * properRate,
+    };
+  }
+  if (phase.kind === "dwell" && phase.dwell !== undefined) {
+    const dwell = phase.dwell;
+    const clamped = Math.min(dwell.duration.value, elapsed);
+    const gateState = worldlines.gates.find((candidate) => candidate.id === dwell.gateId);
+    if (gateState === undefined) {
+      issues.push(
+        Object.freeze({
+          code: "non-finite-worldline" as const,
+          path: `gates.${dwell.gateId}`,
+          message: `Dwell Gate ${dwell.gateId} is missing from the sampled worldlines.`,
+          entityType: "gate" as const,
+          entityId: dwell.gateId,
+          relatedId: undefined,
+        }),
+      );
+      return undefined;
+    }
+    const properIssues: SimulationIssue[] = [];
+    const properTime = integrateGateProperTime(
+      scenario,
+      dwell.gateId,
+      phase.startCoordinateTime,
+      seconds(clamped),
+      properIssues,
+    );
+    if (properTime === undefined || properIssues.length > 0) {
+      issues.push(...properIssues);
+      return undefined;
+    }
+    return {
+      position: gateState.position,
+      velocity: gateState.velocity,
+      shipProperTime: phase.start.shipProperTime.value + properTime,
+    };
+  }
+  if (phase.kind === "in-system-transfer" && phase.transfer !== undefined) {
+    const transferSample: InSystemTransferSample = sampleInSystemTransferAt(
+      phase.transfer,
+      seconds(elapsed),
+    );
+    return {
+      position: transferSample.position,
+      velocity: transferSample.velocity,
+      shipProperTime: phase.start.shipProperTime.value + transferSample.properTime.value,
+    };
+  }
+  const atEnd = elapsed >= phase.clusterCoordinateDuration.value;
+  return {
+    position: atEnd ? phase.endPosition : phase.startPosition,
+    velocity: atEnd ? phase.endVelocity : phase.startVelocity,
+    shipProperTime: atEnd ? phase.end.shipProperTime.value : phase.start.shipProperTime.value,
+  };
+}
+
+function sampleClockBounds(
+  reading: JourneyClockReading,
+  scenario: CompiledScenario,
+  timeline: MultiLegJourneyTimeline,
+): JourneySampleUncertainty {
+  const clockBoundsValue = clockBounds(reading, scenario.uncertainty);
+  const lower = seconds(
+    timeline.departureCoordinateTime.value + timeline.totalBounds.lower.clusterCoordinateTime.value,
+  );
+  const upper = seconds(
+    timeline.departureCoordinateTime.value + timeline.totalBounds.upper.clusterCoordinateTime.value,
+  );
+  return Object.freeze({
+    clockBounds: clockBoundsValue,
+    arrivalWindow: conservativeBounds(
+      timeline.arrivalCoordinateTime,
+      lower,
+      upper,
+      timeline.displayPrecision,
+    ),
+    hasUncertainty: scenario.uncertainty.hasUncertainty,
+    sourcePaths: scenario.uncertainty.propertyPaths,
+  });
+}
+
+function sampleView(phase: MultiLegJourneyPhase | undefined): JourneySampleView {
+  return phase?.kind === "interstellar-cruise" ? "cluster" : "system";
+}
+
+function sampleEventState(
+  eventValue: MultiLegJourneyTimelineEvent | undefined,
+  fallback: SamplePhysicalState | undefined,
+): SamplePhysicalState | undefined {
+  if (eventValue?.position === undefined || eventValue.velocity === undefined) {
+    return fallback;
+  }
+  return {
+    position: eventValue.position,
+    velocity: eventValue.velocity,
+    shipProperTime: eventValue.clocks.shipProperTime.value,
+  };
+}
+
+/**
+ * Samples a complete multi-leg Journey at an absolute Cluster Coordinate Time.
+ *
+ * All physical state, Gate and Orbital Anchor worldlines, phase details, view selection, and clock
+ * readings are derived synchronously from one immutable model-owned state. The sampler evaluates
+ * exact cruise, Dwell, and powered-transfer solutions; React and renderer projections never
+ * interpolate physical state or cumulative clocks.
+ *
+ * @param scenario - The compiled Scenario owning all worldlines and provenance.
+ * @param timeline - The complete Journey Timeline to sample.
+ * @param coordinateTime - Absolute Scenario Cluster Coordinate Time, or a finite number of seconds.
+ * @param eventIndex - Optional exact event index used by deterministic event stepping.
+ * @returns An immutable sampled state or structured worldline/sampling issues.
+ */
+export function sampleJourneyAt(
+  scenario: CompiledScenario,
+  timeline: MultiLegJourneyTimeline,
+  coordinateTime: Seconds | number,
+  eventIndex: number | undefined = undefined,
+): JourneySampleResult {
+  const requested = typeof coordinateTime === "number" ? coordinateTime : coordinateTime.value;
+  const lower = timeline.departureCoordinateTime.value;
+  const upper = Math.max(lower, timeline.arrivalCoordinateTime.value);
+  const requestedEvent =
+    eventIndex === undefined
+      ? undefined
+      : timeline.events[Math.max(0, Math.min(timeline.events.length - 1, Math.trunc(eventIndex)))];
+  const value =
+    requestedEvent?.coordinateTime.value ??
+    (Number.isFinite(requested) ? Math.max(lower, Math.min(upper, requested)) : lower);
+  const resolvedEventIndex =
+    requestedEvent === undefined
+      ? sampleEventIndex(timeline, value)
+      : timeline.events.indexOf(requestedEvent);
+  const eventValue =
+    requestedEvent ??
+    (resolvedEventIndex === undefined ? undefined : timeline.events[resolvedEventIndex]);
+  const phaseIndex = samplePhaseIndex(timeline, value, eventValue);
+  const phase = phaseIndex === undefined ? undefined : timeline.phases[phaseIndex];
+  const worldlineResult = resolveScenarioWorldlines(scenario, seconds(value));
+  if (!worldlineResult.ok) {
+    return sampleFailure(worldlineResult.issues.map(sampleIssueFromWorldline));
+  }
+  const issues: SimulationIssue[] = [];
+  const fallback =
+    phase === undefined
+      ? undefined
+      : phaseSampleState(scenario, phase, value, worldlineResult.worldlines, issues);
+  const physical = sampleEventState(eventValue, fallback);
+  if (physical === undefined) {
+    return sampleFailure([
+      {
+        code: "invalid-coordinate-state",
+        path: "timeline.sample",
+        message:
+          "Journey sampling could not resolve a ship state at the requested coordinate time.",
+        entityType: undefined,
+        entityId: undefined,
+        relatedId: undefined,
+      },
+    ]);
+  }
+  if (issues.length > 0) {
+    return sampleFailure(issues);
+  }
+  const clocksValue =
+    eventValue?.clocks ??
+    clocks(
+      seconds(value - timeline.departureCoordinateTime.value),
+      seconds(physical.shipProperTime),
+    );
+  const provenance = sampleProvenance(scenario, phase);
+  const uncertainty = sampleClockBounds(clocksValue, scenario, timeline);
+  const phaseDetails =
+    phase === undefined
+      ? undefined
+      : Object.freeze({
+          kind: phase.kind,
+          stepIndex: phase.stepIndex,
+          departureGateId: phase.departureGateId,
+          destinationGateId: phase.destinationGateId,
+          startCoordinateTime: phase.startCoordinateTime,
+          endCoordinateTime: phase.endCoordinateTime,
+          nominalDuration: phase.clusterCoordinateDuration,
+          nominalClocks: phase.end,
+          bounds: phase.bounds,
+          provenance,
+          discrepancies: timeline.discrepancies,
+        });
+  return Object.freeze({
+    ok: true as const,
+    state: Object.freeze({
+      kind: "journey-sample" as const,
+      timeline,
+      coordinateTime: seconds(value),
+      phaseIndex,
+      phase,
+      eventIndex: resolvedEventIndex,
+      event: eventValue,
+      view: sampleView(phase),
+      shipPosition: physical.position,
+      shipVelocity: physical.velocity,
+      worldlines: worldlineResult.worldlines,
+      clocks: clocksValue,
+      phaseDetails,
+      provenance,
+      discrepancies: timeline.discrepancies,
+      uncertainty,
+    }),
+    issues: [] as const,
+  });
+}
+
+/**
+ * Alias for callers that describe continuous sampling as a Journey operation.
+ */
+export const sampleJourney = sampleJourneyAt;
+
+/**
+ * Selects the next or previous exact event in the immutable Journey Timeline.
+ *
+ * Repeated coordinate timestamps remain distinct: stepping walks the event array rather than
+ * searching by time, so zero-duration transitions and coincident Dwell boundaries are observable.
+ *
+ * @param timeline - Complete Journey Timeline with its authoritative event ordering.
+ * @param eventIndex - Current event index, or undefined before the first/after the last event.
+ * @param direction - Whether to move to the next or previous event.
+ * @returns The clamped event index, or undefined for an empty event list.
+ */
+export function stepJourneyEvent(
+  timeline: MultiLegJourneyTimeline,
+  eventIndex: number | undefined,
+  direction: JourneyEventStepDirection,
+): number | undefined {
+  if (timeline.events.length === 0) {
+    return undefined;
+  }
+  if (eventIndex === undefined) {
+    return direction === "next" ? 0 : timeline.events.length - 1;
+  }
+  const current = Math.max(0, Math.min(timeline.events.length - 1, Math.trunc(eventIndex)));
+  return Math.max(
+    0,
+    Math.min(timeline.events.length - 1, current + (direction === "next" ? 1 : -1)),
+  );
+}
+
 /**
  * Simulates one powered In-system Transfer when the request is explicitly tagged with
  * `kind: "in-system-transfer"`; otherwise this overload preserves the Interstellar Cruise seam.
- *
+
  * @param scenario - The immutable, previously compiled Scenario.
  * @param request - A tagged powered-transfer request.
  * @returns A powered In-system Transfer timeline or structured transfer issues.

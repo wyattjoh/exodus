@@ -44,6 +44,7 @@ import type {
   ScenarioStorageRecord,
 } from "./scenario-repository";
 import { formatDuration, formatPercent, formatPhaseKind } from "./format";
+import { JourneyPlaybackPanel, useJourneyPlayback } from "./journey-playback";
 import {
   formatCommittedMutationMessage,
   publishCommittedScenario,
@@ -619,6 +620,8 @@ export default function App(): JSX.Element {
   const selectedDeparture = selection.departureGateId ?? "";
   const selectedDestination = selection.destinationGateId ?? "";
   const uncertaintyControls = useMemo(() => getScenarioUncertaintyControls(scenario), [scenario]);
+  const plannedJourney = result?.ok === true ? result.plan : undefined;
+  const playback = useJourneyPlayback(model, activeScenario, plannedJourney?.timeline);
 
   useEffect(() => {
     let current = true;
@@ -1159,7 +1162,8 @@ export default function App(): JSX.Element {
           ) : null}
         </aside>
 
-        <main className="results" aria-live="polite">
+        <main className="results">
+          {playback ? <JourneyPlaybackPanel playback={playback} /> : null}
           <WebGpuClusterExplorer
             scenario={activeScenario}
             selection={selection}
@@ -1172,7 +1176,8 @@ export default function App(): JSX.Element {
               error: generationError,
             }}
             model={model}
-            plannedJourney={result?.ok === true ? result.plan : undefined}
+            plannedJourney={plannedJourney}
+            journeySample={playback?.sample}
           />
           {workerFailure ? (
             <section

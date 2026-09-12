@@ -149,6 +149,11 @@
   background: currentColor;
 }
 
+.system-swatch-ship {
+  color: #f5f8ff;
+  background: currentColor;
+}
+
 .system-scrubber {
   display: grid;
   gap: 7px;

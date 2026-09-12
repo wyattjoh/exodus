@@ -9,6 +9,7 @@ import {
   multiLegJourneyRequest,
   multiLegJourneyScenario,
   minimalScenario,
+  sampleJourneyAt,
   seconds,
   simulateMultiLegJourney,
   SPEED_OF_LIGHT,
@@ -84,6 +85,43 @@ describe("multi-leg Journey Timeline", () => {
     expect(result.timeline.clocks.agingDifference.value).toBeGreaterThan(0);
     expect(result.timeline.events.some((event) => event.kind === "dwell-start")).toBe(true);
     expect(result.timeline.events.some((event) => event.kind === "transfer-arrival")).toBe(true);
+  });
+
+  test("samples every elapsed phase from one deterministic physical state", () => {
+    const scenario = requireScenario(multiLegJourneyScenario);
+    const result = simulateMultiLegJourney(scenario, multiLegJourneyRequest);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const samples = result.timeline.phases.map((phase) =>
+      sampleJourneyAt(
+        scenario,
+        result.timeline,
+        seconds(
+          phase.startCoordinateTime.value +
+            (phase.endCoordinateTime.value - phase.startCoordinateTime.value) / 2,
+        ),
+      ),
+    );
+    expect(samples.every((sample) => sample.ok)).toBe(true);
+    const transferSample = samples[4];
+    expect(transferSample?.ok).toBe(true);
+    if (transferSample?.ok) {
+      expect(transferSample.state.phase?.kind).toBe("in-system-transfer");
+      expect(transferSample.state.view).toBe("system");
+      expect(Number(transferSample.state.clocks.agingDifference.value)).toBe(
+        Number(transferSample.state.clocks.clusterCoordinateTime.value) -
+          Number(transferSample.state.clocks.shipProperTime.value),
+      );
+    }
+    const cruiseSample = samples[1];
+    expect(cruiseSample?.ok).toBe(true);
+    if (cruiseSample?.ok) {
+      expect(cruiseSample.state.view).toBe("cluster");
+      expect(cruiseSample.state.worldlines.gates.length).toBeGreaterThan(0);
+    }
   });
 
   test("integrates proper time along an orbiting Dwell Gate worldline", () => {

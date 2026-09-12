@@ -11,12 +11,14 @@ import "./cluster-explorer.css";
 import type {
   CompiledScenario,
   JourneyModel,
+  JourneySample,
   ProvenanceKind,
   RoutePlan,
   StableId,
   WorkerPlanningProgress,
 } from "../src/index";
 import { provenanceKinds } from "./planning";
+import { formatDuration, formatPhaseKind } from "./format";
 import {
   beginExplorerPointerGesture,
   buildClusterExplorerScene,
@@ -71,6 +73,7 @@ export type WebGpuClusterExplorerProps = {
   readonly generation: ClusterGenerationView;
   readonly model: Pick<JourneyModel, "evaluateWorldlines"> | undefined;
   readonly plannedJourney: RoutePlan | undefined;
+  readonly journeySample: JourneySample | undefined;
 };
 
 function color(
@@ -123,24 +126,57 @@ function connectionColor(kind: ProvenanceKind): readonly [number, number, number
   ];
 }
 
-function renderScene(scene: ClusterExplorerScene, selection: ExplorerSelection): WebGpuRenderScene {
+function renderScene(
+  scene: ClusterExplorerScene,
+  selection: ExplorerSelection,
+  journeySample: JourneySample | undefined,
+): WebGpuRenderScene {
+  const gatePositions =
+    journeySample === undefined
+      ? undefined
+      : new Map(
+          journeySample.worldlines.gates.map((gate) => [
+            gate.id,
+            Object.freeze([
+              gate.position.x.value / scene.extentMeters,
+              gate.position.y.value / scene.extentMeters,
+              gate.position.z.value / scene.extentMeters,
+            ]) as readonly [number, number, number],
+          ]),
+        );
+  const shipPoint =
+    journeySample === undefined
+      ? []
+      : [
+          Object.freeze({
+            position: Object.freeze([
+              journeySample.shipPosition.x.value / scene.extentMeters,
+              journeySample.shipPosition.y.value / scene.extentMeters,
+              journeySample.shipPosition.z.value / scene.extentMeters,
+            ]) as readonly [number, number, number],
+            color: Object.freeze([0.98, 0.98, 1, 1]) as readonly [number, number, number, number],
+          }),
+        ];
   return Object.freeze({
-    points: Object.freeze(
-      scene.entities.map((point) =>
+    points: Object.freeze([
+      ...scene.entities.map((point) =>
         Object.freeze({
-          position: point.position,
+          position: gatePositions?.get(point.id) ?? point.position,
           color: pointColor(point, selection),
         }),
       ),
-    ),
+      ...shipPoint,
+    ]),
     connections: Object.freeze(
-      scene.connections.map((connection) =>
-        Object.freeze({
-          from: connection.endpoints[0],
-          to: connection.endpoints[1],
+      scene.connections.map((connection) => {
+        const from = gatePositions?.get(connection.gateAId) ?? connection.endpoints[0];
+        const to = gatePositions?.get(connection.gateBId) ?? connection.endpoints[1];
+        return Object.freeze({
+          from,
+          to,
           color: connectionColor(connection.provenance.primaryKind),
-        }),
-      ),
+        });
+      }),
     ),
   });
 }
@@ -214,6 +250,7 @@ export function WebGpuClusterExplorer({
   generation,
   model,
   plannedJourney,
+  journeySample,
 }: WebGpuClusterExplorerProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<WebGpuRenderer | undefined>(undefined);
@@ -307,8 +344,8 @@ export function WebGpuClusterExplorer({
     if (renderer === undefined || cameraRevision < 0) {
       return;
     }
-    renderer.setScene(renderScene(scene, selection), cameraRef.current);
-  }, [scene, selection, cameraRevision]);
+    renderer.setScene(renderScene(scene, selection, journeySample), cameraRef.current);
+  }, [journeySample, scene, selection, cameraRevision]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -324,11 +361,11 @@ export function WebGpuClusterExplorer({
     const observer = new ResizeObserver(() => {
       const viewport = viewportFor(canvas);
       renderer.resize(viewport.width, viewport.height, globalThis.devicePixelRatio || 1);
-      renderer.setScene(renderScene(scene, selection), cameraRef.current);
+      renderer.setScene(renderScene(scene, selection, journeySample), cameraRef.current);
     });
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [scene, selection, startup.state]);
+  }, [journeySample, scene, selection, startup.state]);
 
   const focus = (point: ExplorerPoint): void => {
     cameraRef.current = focusCameraOnPoint(cameraRef.current, point.position);
@@ -480,12 +517,17 @@ export function WebGpuClusterExplorer({
         </div>
         <div className="explorer-status" aria-label="Cluster generation status">
           <span className="status-pill status-success">3D</span>
+          {journeySample !== undefined ? (
+            <span className="status-pill status-neutral">
+              Active {journeySample.view === "cluster" ? "Cluster" : "System"} sample
+            </span>
+          ) : null}
           <span>{generationLabel(generation)}</span>
         </div>
       </div>
       <p className="control-help explorer-intro">
-        Systems are shown at Cluster scale. Gate Connections identify paired Gates; Journey planning
-        still records the Interstellar Cruise between them.
+        Systems are shown at Cluster scale. Gate Connections identify paired Gates; when Journey
+        playback is active, Gate worldlines and the current ship sample share its coordinate time.
       </p>
       {startup.state === "failed" ? (
         <section className="webgpu-failure" role="alert" aria-labelledby="webgpu-failure-heading">
@@ -533,13 +575,19 @@ export function WebGpuClusterExplorer({
                 </output>
               ) : null}
             </div>
-            <div className="explorer-legend" aria-label="Provenance legend">
+            <div className="explorer-legend" aria-label="Provenance and Journey legend">
               {provenanceKinds.map((kind) => (
                 <span className={`provenance-key provenance-${kind}`} key={kind}>
                   <span className="provenance-swatch" aria-hidden="true" />
                   {provenanceLabel(kind)}
                 </span>
               ))}
+              {journeySample !== undefined ? (
+                <span className="provenance-key journey-ship-key">
+                  <span className="provenance-swatch" aria-hidden="true" />
+                  Current ship sample
+                </span>
+              ) : null}
             </div>
             <p className="camera-help">
               Drag to orbit · Shift-drag to pan · scroll to zoom · arrow keys to navigate · Enter to
@@ -560,7 +608,7 @@ export function WebGpuClusterExplorer({
                 </label>
               ))}
             </fieldset>
-            <div className="explorer-results" aria-live="polite">
+            <div className="explorer-results">
               <div className="explorer-results-heading">
                 <span>Search results</span>
                 <span className="count-badge">{searchResults.length}</span>
@@ -585,7 +633,46 @@ export function WebGpuClusterExplorer({
                 </div>
               )}
             </div>
-            <div className="explorer-inspection" aria-live="polite">
+            {journeySample !== undefined ? (
+              <section
+                className="journey-inspection cluster-journey-inspection"
+                aria-label="Active Journey sample"
+              >
+                <div className="explorer-results-heading">
+                  <span>Active Journey sample</span>
+                  <span className="status-pill status-success">
+                    {journeySample.view === "cluster" ? "Cluster" : "System"}
+                  </span>
+                </div>
+                <p>
+                  <strong>
+                    {journeySample.phase === undefined
+                      ? "No active phase"
+                      : formatPhaseKind(journeySample.phase.kind)}
+                  </strong>{" "}
+                  · T+{formatDuration(journeySample.clocks.clusterCoordinateTime)}
+                </p>
+                <dl className="journey-clock-grid">
+                  <div>
+                    <dt>Cluster Coordinate</dt>
+                    <dd>{formatDuration(journeySample.clocks.clusterCoordinateTime)}</dd>
+                  </div>
+                  <div>
+                    <dt>Ship Proper</dt>
+                    <dd>{formatDuration(journeySample.clocks.shipProperTime)}</dd>
+                  </div>
+                  <div>
+                    <dt>Aging Difference</dt>
+                    <dd>{formatDuration(journeySample.clocks.agingDifference)}</dd>
+                  </div>
+                </dl>
+                <p className="control-help">
+                  Ship state is sampled from the Journey Model at the same coordinate time used by
+                  the linked System view.
+                </p>
+              </section>
+            ) : null}
+            <div className="explorer-inspection">
               <div className="explorer-results-heading">
                 <span>Provenance inspection</span>
                 {generatedSystemCount > 0 ? (
@@ -653,6 +740,7 @@ export function WebGpuClusterExplorer({
           scenario={scenario}
           systemId={inspectedSystemId}
           journey={plannedJourney}
+          journeySample={journeySample}
           selectedGateIds={selectedGateIds}
           onClose={() =>
             onSelectionChange(

@@ -3,10 +3,14 @@ import { describe, expect, test } from "bun:test";
 import {
   compileScenario,
   minimalScenario,
+  multiLegJourneyRequest,
+  multiLegJourneyScenario,
   meters,
   metersPerSecond,
   seconds,
+  sampleJourneyAt,
   simulateJourney,
+  stepJourneyEvent,
   SPEED_OF_LIGHT,
   vector3,
   type ScenarioInput,
@@ -105,6 +109,80 @@ describe("Interstellar Cruise Journey simulation", () => {
     expect(Number(result.timeline.events[3]?.cumulativeShipProperTime.value)).toBe(
       Number(result.timeline.total.shipProperTime.value),
     );
+  });
+
+  test("samples exact cruise physics, synchronized clocks, and worldlines", () => {
+    const scenario = requireScenario(multiLegJourneyScenario);
+    const result = simulateJourney(scenario, multiLegJourneyRequest);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const cruise = at(result.timeline.phases, 1);
+    const half =
+      cruise.start.clusterCoordinateTime.value + cruise.clusterCoordinateDuration.value / 2;
+    const sample = sampleJourneyAt(scenario, result.timeline, seconds(half));
+    expect(sample.ok).toBe(true);
+    if (!sample.ok) {
+      return;
+    }
+
+    expect(sample.state.view).toBe("cluster");
+    expect(sample.state.phase?.kind).toBe("interstellar-cruise");
+    expect(sample.state.event).toBeUndefined();
+    expect(Number(sample.state.clocks.clusterCoordinateTime.value)).toBeCloseTo(
+      half - result.timeline.departureCoordinateTime.value,
+      6,
+    );
+    expect(Number(sample.state.clocks.agingDifference.value)).toBeCloseTo(
+      Number(sample.state.clocks.clusterCoordinateTime.value) -
+        Number(sample.state.clocks.shipProperTime.value),
+      6,
+    );
+    expect(sample.state.worldlines.gates.length).toBeGreaterThanOrEqual(2);
+    expect(sample.state.uncertainty.hasUncertainty).toBe(scenario.uncertainty.hasUncertainty);
+  });
+
+  test("steps repeated-time events by ordered identity rather than timestamp", () => {
+    const scenario = requireScenario(multiLegJourneyScenario);
+    const result = simulateJourney(scenario, multiLegJourneyRequest);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const lastEventIndex = result.timeline.events.length - 1;
+    expect(stepJourneyEvent(result.timeline, undefined, "next")).toBe(0);
+    expect(stepJourneyEvent(result.timeline, 0, "next")).toBe(1);
+    expect(stepJourneyEvent(result.timeline, lastEventIndex, "next")).toBe(lastEventIndex);
+    expect(stepJourneyEvent(result.timeline, 0, "previous")).toBe(0);
+
+    const firstTimeEvents = result.timeline.events
+      .map((event, index) => ({ event, index }))
+      .filter(
+        ({ event }) =>
+          event.coordinateTime.value === result.timeline.events[0]?.coordinateTime.value,
+      );
+    expect(firstTimeEvents.length).toBeGreaterThan(1);
+    const secondAtSameTime = firstTimeEvents[1];
+    if (secondAtSameTime !== undefined) {
+      const stepped = stepJourneyEvent(result.timeline, secondAtSameTime.index - 1, "next");
+      expect(stepped).toBe(secondAtSameTime.index);
+      const sampled = sampleJourneyAt(
+        scenario,
+        result.timeline,
+        seconds(0),
+        secondAtSameTime.index,
+      );
+      expect(sampled.ok).toBe(true);
+      if (sampled.ok) {
+        expect(sampled.state.eventIndex).toBe(secondAtSameTime.index);
+        expect(sampled.state.event?.kind).toBe(secondAtSameTime.event.kind);
+      }
+    }
   });
 
   test("keeps cumulative clocks relative to the Journey departure epoch", () => {

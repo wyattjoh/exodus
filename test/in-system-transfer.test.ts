@@ -6,6 +6,7 @@ import {
   meters,
   metersPerSecond,
   metersPerSecondSquared,
+  sampleInSystemTransferAt,
   seconds,
   simulateInSystemTransfer,
   simulateJourney,
@@ -138,6 +139,39 @@ describe("powered In-system Transfer", () => {
       expectedDuration,
       6,
     );
+  });
+
+  test("samples powered phases from the authoritative solution without endpoint interpolation", () => {
+    const scenario = requireScenario(transferScenario(1e9));
+    const result = simulateInSystemTransfer(scenario, {
+      departureGateId: "gate:terra",
+      destinationGateId: "gate:terra-transfer-destination",
+      shipProfileId: "ship:survey",
+      departureCoordinateTime: seconds(0),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const midpoint = result.timeline.totalClusterCoordinateTime.value / 2;
+    const sampled = sampleInSystemTransferAt(result.timeline, seconds(midpoint));
+    const accelerationEnd = sampleInSystemTransferAt(
+      result.timeline,
+      result.timeline.phases[0]?.end.clusterCoordinateTime ?? seconds(0),
+    );
+    expect(sampled.phase).toBe("braking");
+    expect(sampled.velocity.x.value).toBeGreaterThan(0);
+    expect(sampled.properTime.value).toBeGreaterThan(0);
+    expect(accelerationEnd.phase).toBe("braking");
+    expect(accelerationEnd.position.x.value).toBeGreaterThan(0);
+    expect(
+      sampled.position.x.value ===
+        (Number(result.timeline.departurePosition.x.value) +
+          Number(result.timeline.arrivalPosition.x.value)) /
+          2,
+    ).toBe(false);
   });
 
   test("exposes the same transfer through the tagged Journey seam", () => {

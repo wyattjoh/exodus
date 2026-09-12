@@ -8,7 +8,7 @@ import {
   type WheelEvent,
 } from "react";
 import "./system-view.css";
-import type { CompiledScenario, ProvenanceKind, StableId } from "../src/index";
+import type { CompiledScenario, JourneySample, ProvenanceKind, StableId } from "../src/index";
 import { formatDuration, formatPhaseKind } from "./format";
 import {
   beginExplorerPointerGesture,
@@ -49,6 +49,7 @@ export type SystemExplorerViewProps = {
   readonly scenario: CompiledScenario;
   readonly systemId: StableId;
   readonly journey: SystemExplorerJourney | undefined;
+  readonly journeySample: JourneySample | undefined;
   readonly selectedGateIds: readonly StableId[];
   readonly onClose: () => void;
 };
@@ -155,6 +156,7 @@ export function SystemExplorerView({
   scenario,
   systemId,
   journey,
+  journeySample,
   selectedGateIds,
   onClose,
 }: SystemExplorerViewProps): JSX.Element {
@@ -179,8 +181,11 @@ export function SystemExplorerView({
   );
   const selectedTimelineEvent =
     selectedEventIndex === undefined ? undefined : journeyTimeline?.events[selectedEventIndex];
+  const activeEventIndex = journeySample?.eventIndex ?? selectedEventIndex;
   const coordinateTime =
-    selectedTimelineEvent?.coordinateTime.value ?? scenario.epoch.coordinateTime.value;
+    journeySample?.coordinateTime.value ??
+    selectedTimelineEvent?.coordinateTime.value ??
+    scenario.epoch.coordinateTime.value;
   const scene = useMemo(
     () =>
       buildSystemExplorerScene({
@@ -192,8 +197,18 @@ export function SystemExplorerView({
         selectedGateIds,
         orbitSampleCount: undefined,
         timelineEventIndex: selectedEventIndex,
+        journeySample,
       }),
-    [coordinateTime, journey, model, scenario, selectedEventIndex, selectedGateIds, systemId],
+    [
+      coordinateTime,
+      journey,
+      journeySample,
+      model,
+      scenario,
+      selectedEventIndex,
+      selectedGateIds,
+      systemId,
+    ],
   );
   const renderScene = useMemo(() => renderSystemScene(scene), [scene]);
   const timeline = scene.journey;
@@ -401,6 +416,11 @@ export function SystemExplorerView({
         </div>
         <div className="system-view-actions">
           <span className="status-pill status-success">AU-scale</span>
+          {journeySample !== undefined ? (
+            <span className="status-pill status-neutral">
+              Active {journeySample.view === "system" ? "System" : "Cluster"} sample
+            </span>
+          ) : null}
           <button className="button button-subtle" type="button" onClick={onClose}>
             Back to Cluster
           </button>
@@ -480,6 +500,12 @@ export function SystemExplorerView({
                 <i className="system-legend-swatch system-swatch-intercept" />
                 Moving intercept
               </span>
+              {journeySample !== undefined ? (
+                <span>
+                  <i className="system-legend-swatch system-swatch-ship" />
+                  Current ship sample
+                </span>
+              ) : null}
             </div>
             {timeline !== undefined ? (
               <div className="system-scrubber" aria-label="Journey epoch controls">
@@ -495,7 +521,8 @@ export function SystemExplorerView({
                   <select
                     id="system-epoch-event"
                     className="system-event-select"
-                    value={selectedEventIndex ?? ""}
+                    value={activeEventIndex ?? ""}
+                    disabled={journeySample !== undefined}
                     onChange={(event) => {
                       const nextIndex = Number(event.currentTarget.value);
                       if (Number.isInteger(nextIndex)) {
@@ -520,8 +547,9 @@ export function SystemExplorerView({
                   <p className="muted">This Journey has no model-emitted events to inspect.</p>
                 )}
                 <p className="control-help system-discrete-help">
-                  Inspection is discrete: the view samples only exact model events or phase
-                  boundaries; it never interpolates a physical state between them.
+                  {journeySample !== undefined
+                    ? "Playback uses continuous authoritative Journey samples; event buttons are paused while the shared scrubber is active."
+                    : "Inspection is discrete: the view samples only exact model events or phase boundaries; it never interpolates a physical state between them."}
                 </p>
                 {localEvents.length > 0 ? (
                   <div className="system-event-buttons" aria-label="Local Journey events">
@@ -530,7 +558,8 @@ export function SystemExplorerView({
                         className="button button-subtle"
                         type="button"
                         key={`${event.kind}-${event.coordinateTime.value}-${index}`}
-                        aria-pressed={selectedEventIndex === index}
+                        aria-pressed={activeEventIndex === index}
+                        disabled={journeySample !== undefined}
                         onClick={() => setSelectedEventIndex(index)}
                       >
                         {formatPhaseKind(event.kind)} ·{" "}
@@ -554,7 +583,7 @@ export function SystemExplorerView({
             aria-label="System geometry and Journey inspection"
           >
             {scene.activeJourney !== undefined && activePhase !== undefined ? (
-              <section className="system-active-phase" aria-live="polite">
+              <section className="system-active-phase">
                 <p className="eyebrow">Active epoch</p>
                 <h3>{activePhase.label}</h3>
                 <p>{activePhase.detail}</p>
@@ -575,6 +604,17 @@ export function SystemExplorerView({
                 {scene.activeJourney.event !== undefined ? (
                   <p className="system-active-event">
                     Event: <strong>{formatPhaseKind(scene.activeJourney.event.kind)}</strong>
+                  </p>
+                ) : (
+                  <p className="system-active-event">
+                    Continuous Journey sample · exact model state
+                  </p>
+                )}
+                {scene.activeJourney.uncertainty !== undefined ? (
+                  <p className="control-help">
+                    Uncertainty:{" "}
+                    {scene.activeJourney.uncertainty.hasUncertainty ? "bounded" : "nominal only"}.{" "}
+                    View: {scene.activeJourney.view ?? "system"}.
                   </p>
                 ) : null}
               </section>
@@ -654,7 +694,8 @@ export function SystemExplorerView({
                         className="button button-subtle"
                         type="button"
                         key={`${event.kind}-${event.coordinateTime.value}-${index}`}
-                        aria-pressed={selectedEventIndex === index}
+                        aria-pressed={activeEventIndex === index}
+                        disabled={journeySample !== undefined}
                         onClick={() => setSelectedEventIndex(index)}
                       >
                         <strong>{formatPhaseKind(event.kind)}</strong>
@@ -699,7 +740,7 @@ export function SystemExplorerView({
                         className={`system-phase-button ${activePhase?.stepIndex === phase.stepIndex && activePhase.kind === phase.kind ? "is-active" : ""}`}
                         type="button"
                         key={`${phase.stepIndex}-${phase.kind}`}
-                        disabled={phaseEventIndex < 0}
+                        disabled={phaseEventIndex < 0 || journeySample !== undefined}
                         onClick={() => {
                           if (phaseEventIndex >= 0) {
                             setSelectedEventIndex(phaseEventIndex);

@@ -129,6 +129,74 @@ export type InSystemTransferEvent = {
 };
 
 /**
+ * A serializable three-dimensional coefficient used by the authoritative transfer sampler.
+ *
+ * The values are dimensionless when used for a direction and use SI units when used for a
+ * position or velocity. The containing field identifies the interpretation.
+ */
+export type InSystemTransferSamplingVector = {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+};
+
+/**
+ * One exact powered-transfer phase retained for continuous Journey sampling.
+ */
+export type InSystemTransferSamplingPhase = {
+  readonly kind: InSystemTransferPhaseKind;
+  readonly startCoordinateTime: number;
+  readonly endCoordinateTime: number;
+  readonly startProperTime: number;
+  readonly endProperTime: number;
+  readonly startRelativeDistance: number;
+  readonly coordinateDuration: number;
+  readonly properDuration: number;
+  readonly relativeDistance: number;
+  readonly startRelativeSpeed: number;
+  readonly endRelativeSpeed: number;
+};
+
+/**
+ * The immutable numerical solution needed to evaluate a powered transfer at an intermediate
+ * Cluster Coordinate Time without interpolating physical states in a caller.
+ */
+export type InSystemTransferSamplingModel = {
+  readonly kind: "profile" | "general";
+  readonly departurePosition: InSystemTransferSamplingVector;
+  readonly departureVelocity: InSystemTransferSamplingVector;
+  readonly direction: InSystemTransferSamplingVector;
+  readonly acceleration: number;
+  readonly brakingAcceleration: number;
+  readonly peakRapidity: number;
+  readonly peakRapidityVector: InSystemTransferSamplingVector | undefined;
+  readonly brakingDirection: InSystemTransferSamplingVector | undefined;
+  readonly brakingRapidity: number | undefined;
+  readonly peakVelocity: InSystemTransferSamplingVector | undefined;
+  readonly coastEndRestEvent:
+    | {
+        readonly time: number;
+        readonly position: InSystemTransferSamplingVector;
+      }
+    | undefined;
+  readonly transverseAcceleration: InSystemTransferSamplingVector;
+  readonly transverseBraking: InSystemTransferSamplingVector;
+  readonly phases: readonly InSystemTransferSamplingPhase[];
+};
+
+/**
+ * A sampled state from one powered In-system Transfer.
+ */
+export type InSystemTransferSample = {
+  readonly elapsed: Seconds;
+  readonly phaseIndex: number;
+  readonly phase: InSystemTransferPhaseKind;
+  readonly position: PositionVector;
+  readonly velocity: VelocityVector;
+  readonly properTime: Seconds;
+};
+
+/**
  * The complete result of one powered In-system Transfer.
  */
 export type InSystemTransferTimeline = {
@@ -153,6 +221,8 @@ export type InSystemTransferTimeline = {
   readonly velocityResidual: MetersPerSecond;
   readonly phases: readonly InSystemTransferPhase[];
   readonly events: readonly InSystemTransferEvent[];
+  /** Exact solution coefficients owned by the Journey Model sampler. */
+  readonly sampling: InSystemTransferSamplingModel;
   readonly total: JourneyClockReading;
   readonly totalClusterCoordinateTime: Seconds;
   readonly totalShipProperTime: Seconds;
@@ -245,6 +315,8 @@ type Segment = {
 type TransferProfile = {
   readonly duration: number;
   readonly properDuration: number;
+  readonly accelerationMagnitude: number;
+  readonly brakingAccelerationMagnitude: number;
   readonly acceleration: Segment;
   readonly coast: Segment | undefined;
   readonly braking: Segment;
@@ -316,6 +388,14 @@ type GeneralTransferTrajectory = {
   readonly positionResidual: number;
   readonly velocityResidual: number;
   readonly timeResidual: number;
+  readonly departureVelocity: NumericVector3;
+  readonly peakRapidityVector: NumericVector3;
+  readonly peakVelocity: NumericVector3;
+  readonly brakingDirection: NumericVector3;
+  readonly brakingRapidity: number;
+  readonly coastEndRestEvent: FourEvent;
+  readonly acceleration: number;
+  readonly brakingAcceleration: number;
 };
 
 type GeneralSolveEvaluation = {
@@ -911,6 +991,8 @@ function profileForDistance(
     profile: Object.freeze({
       duration,
       properDuration,
+      accelerationMagnitude: acceleration,
+      brakingAccelerationMagnitude: brakingAcceleration,
       acceleration: accelerationPhase,
       coast: coastPhase,
       braking: brakingPhase,
@@ -1093,6 +1175,14 @@ function generalTrajectoryAt(
       positionResidual,
       velocityResidual,
       timeResidual: 0,
+      departureVelocity,
+      peakRapidityVector,
+      peakVelocity,
+      brakingDirection: relativeDirection,
+      brakingRapidity: relativeRapidity,
+      coastEndRestEvent: coastEnd,
+      acceleration,
+      brakingAcceleration,
     }),
     residual: Object.freeze(normalizedResidual),
   };
@@ -1922,6 +2012,136 @@ function event(
   });
 }
 
+function samplingVector(value: NumericVector3): InSystemTransferSamplingVector {
+  return Object.freeze({ x: value.x, y: value.y, z: value.z });
+}
+
+function numericSamplingVector(value: InSystemTransferSamplingVector): NumericVector3 {
+  return { x: value.x, y: value.y, z: value.z };
+}
+
+function samplingPhase(
+  kind: InSystemTransferPhaseKind,
+  startCoordinateTime: number,
+  startProperTime: number,
+  coordinateDuration: number,
+  properDuration: number,
+  startRelativeDistance: number,
+  relativeDistance: number,
+  startRelativeSpeed: number,
+  endRelativeSpeed: number,
+): InSystemTransferSamplingPhase {
+  return Object.freeze({
+    kind,
+    startCoordinateTime,
+    endCoordinateTime: startCoordinateTime + coordinateDuration,
+    startProperTime,
+    endProperTime: startProperTime + properDuration,
+    startRelativeDistance,
+    coordinateDuration,
+    properDuration,
+    relativeDistance,
+    startRelativeSpeed,
+    endRelativeSpeed,
+  });
+}
+
+function profileSamplingModel(
+  departurePosition: NumericVector3,
+  departureVelocity: NumericVector3,
+  profile: TransferProfile,
+): InSystemTransferSamplingModel {
+  const profilePhases = [profile.acceleration, profile.coast, profile.braking].filter(
+    (candidate): candidate is Segment => candidate !== undefined,
+  );
+  let coordinateTime = 0;
+  let properTime = 0;
+  let relativeDistance = 0;
+  const phases = profilePhases.map((profilePhase) => {
+    const value = samplingPhase(
+      profilePhase.kind,
+      coordinateTime,
+      properTime,
+      profilePhase.coordinateDuration,
+      profilePhase.properDuration,
+      relativeDistance,
+      profilePhase.relativeDistance,
+      profilePhase.startRelativeSpeed,
+      profilePhase.endRelativeSpeed,
+    );
+    coordinateTime = value.endCoordinateTime;
+    properTime = value.endProperTime;
+    relativeDistance += profilePhase.relativeDistance;
+    return value;
+  });
+  return Object.freeze({
+    kind: "profile" as const,
+    departurePosition: samplingVector(departurePosition),
+    departureVelocity: samplingVector(departureVelocity),
+    direction: samplingVector(profile.direction),
+    acceleration: profile.accelerationMagnitude,
+    brakingAcceleration: profile.brakingAccelerationMagnitude,
+    peakRapidity: rapidityForSpeed(profile.peakSpeed),
+    peakRapidityVector: undefined,
+    brakingDirection: undefined,
+    brakingRapidity: undefined,
+    peakVelocity: undefined,
+    coastEndRestEvent: undefined,
+    transverseAcceleration: samplingVector(profile.transverseAcceleration),
+    transverseBraking: samplingVector(profile.transverseBraking),
+    phases: Object.freeze(phases),
+  });
+}
+
+function generalSamplingModel(
+  departurePosition: NumericVector3,
+  trajectory: GeneralTransferTrajectory,
+): InSystemTransferSamplingModel {
+  let properTime = 0;
+  const phases = trajectory.phases.map((trajectoryPhase) => {
+    const direction = unitVector(trajectory.peakRapidityVector) ?? zeroVector;
+    const startRelativeDistance =
+      trajectoryPhase.startEvent.position.x * direction.x +
+      trajectoryPhase.startEvent.position.y * direction.y +
+      trajectoryPhase.startEvent.position.z * direction.z;
+    const value = samplingPhase(
+      trajectoryPhase.kind,
+      trajectoryPhase.startEvent.time,
+      properTime,
+      trajectoryPhase.coordinateDuration,
+      trajectoryPhase.properDuration,
+      startRelativeDistance,
+      vectorMagnitude(
+        subtractVector(trajectoryPhase.endEvent.position, trajectoryPhase.startEvent.position),
+      ),
+      vectorMagnitude(trajectoryPhase.startVelocity),
+      vectorMagnitude(trajectoryPhase.endVelocity),
+    );
+    properTime = value.endProperTime;
+    return value;
+  });
+  return Object.freeze({
+    kind: "general" as const,
+    departurePosition: samplingVector(departurePosition),
+    departureVelocity: samplingVector(trajectory.departureVelocity),
+    direction: samplingVector(unitVector(trajectory.peakRapidityVector) ?? zeroVector),
+    acceleration: trajectory.acceleration,
+    brakingAcceleration: trajectory.brakingAcceleration,
+    peakRapidity: vectorMagnitude(trajectory.peakRapidityVector),
+    peakRapidityVector: samplingVector(trajectory.peakRapidityVector),
+    brakingDirection: samplingVector(trajectory.brakingDirection),
+    brakingRapidity: trajectory.brakingRapidity,
+    peakVelocity: samplingVector(trajectory.peakVelocity),
+    coastEndRestEvent: Object.freeze({
+      time: trajectory.coastEndRestEvent.time,
+      position: samplingVector(trajectory.coastEndRestEvent.position),
+    }),
+    transverseAcceleration: samplingVector(zeroVector),
+    transverseBraking: samplingVector(zeroVector),
+    phases: Object.freeze(phases),
+  });
+}
+
 function makeGeneralTimeline(
   departureGateId: StableId,
   destinationGateId: StableId,
@@ -2044,6 +2264,7 @@ function makeGeneralTimeline(
     velocityResidual: terminalResiduals.velocity,
     phases: Object.freeze(phases),
     events: Object.freeze(events),
+    sampling: generalSamplingModel(numericPosition(departure.position), trajectory),
     total,
     totalClusterCoordinateTime: total.clusterCoordinateTime,
     totalShipProperTime: total.shipProperTime,
@@ -2198,6 +2419,7 @@ function makeTimeline(
     vectorMagnitude(peakVelocity),
     vectorMagnitude(arrivalVelocity),
   );
+  const sampling = profileSamplingModel(departurePosition, departureVelocity, profile);
 
   return Object.freeze({
     departureGateId,
@@ -2221,6 +2443,7 @@ function makeTimeline(
     velocityResidual: terminalResiduals.velocity,
     phases: Object.freeze(phases),
     events: Object.freeze(events),
+    sampling,
     total,
     totalClusterCoordinateTime: total.clusterCoordinateTime,
     totalShipProperTime: total.shipProperTime,
@@ -2229,6 +2452,356 @@ function makeTimeline(
     bounds: totalBounds,
     clockBounds: totalBounds,
     displayPrecision: scenario.uncertainty.displayPrecision,
+  });
+}
+
+const TRANSFER_SAMPLING_EPSILON = 1e-7;
+
+function clampTransferElapsed(value: number, duration: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(duration, value));
+}
+
+function transferPhaseIndex(sampling: InSystemTransferSamplingModel, elapsed: number): number {
+  const lastIndex = Math.max(0, sampling.phases.length - 1);
+  for (let index = 0; index < sampling.phases.length; index += 1) {
+    const phase = sampling.phases[index];
+    if (phase !== undefined && elapsed < phase.endCoordinateTime) {
+      return index;
+    }
+  }
+  return lastIndex;
+}
+
+function transferLateralState(
+  sampling: InSystemTransferSamplingModel,
+  phaseKind: InSystemTransferPhaseKind,
+  elapsed: number,
+): { readonly position: NumericVector3; readonly velocity: NumericVector3 } {
+  const accelerationPhase = sampling.phases.find((phase) => phase.kind === "acceleration");
+  const coastPhase = sampling.phases.find((phase) => phase.kind === "coast");
+  const accelerationDuration = accelerationPhase?.coordinateDuration ?? 0;
+  const coastDuration = coastPhase?.coordinateDuration ?? 0;
+  const time = Math.max(
+    0,
+    Math.min(
+      elapsed,
+      phaseKind === "acceleration"
+        ? accelerationDuration
+        : phaseKind === "coast"
+          ? coastDuration
+          : (sampling.phases.find((phase) => phase.kind === "braking")?.coordinateDuration ?? 0),
+    ),
+  );
+  const transverseAcceleration = numericSamplingVector(sampling.transverseAcceleration);
+  const transverseBraking = numericSamplingVector(sampling.transverseBraking);
+  const accelerationVelocity = scaleVector(transverseAcceleration, accelerationDuration);
+  const accelerationPosition = scaleVector(transverseAcceleration, 0.5 * accelerationDuration ** 2);
+  if (phaseKind === "acceleration") {
+    return {
+      position: scaleVector(transverseAcceleration, 0.5 * time ** 2),
+      velocity: scaleVector(transverseAcceleration, time),
+    };
+  }
+  const brakingStartPosition = addVector(
+    accelerationPosition,
+    scaleVector(accelerationVelocity, coastDuration),
+  );
+  if (phaseKind === "coast") {
+    return {
+      position: addVector(accelerationPosition, scaleVector(accelerationVelocity, time)),
+      velocity: accelerationVelocity,
+    };
+  }
+  return {
+    position: addVector(
+      addVector(brakingStartPosition, scaleVector(accelerationVelocity, time)),
+      scaleVector(transverseBraking, 0.5 * time ** 2),
+    ),
+    velocity: addVector(accelerationVelocity, scaleVector(transverseBraking, time)),
+  };
+}
+
+function sampleProfileState(
+  sampling: InSystemTransferSamplingModel,
+  phase: InSystemTransferSamplingPhase,
+  elapsed: number,
+): { readonly position: NumericVector3; readonly velocity: NumericVector3 } {
+  const c = SPEED_OF_LIGHT.value;
+  const acceleration = sampling.acceleration;
+  const brakingAcceleration = sampling.brakingAcceleration;
+  const direction = numericSamplingVector(sampling.direction);
+  const departurePosition = numericSamplingVector(sampling.departurePosition);
+  const departureVelocity = numericSamplingVector(sampling.departureVelocity);
+  let relativeDistance = 0;
+  let relativeSpeed = phase.startRelativeSpeed;
+  if (phase.kind === "acceleration") {
+    const fraction = phase.coordinateDuration <= 0 ? 1 : elapsed / phase.coordinateDuration;
+    const rapidity = Math.asinh(Math.sinh(sampling.peakRapidity) * fraction);
+    relativeDistance = (c ** 2 / acceleration) * (Math.cosh(rapidity) - 1);
+    relativeSpeed = c * Math.tanh(rapidity);
+  } else if (phase.kind === "coast") {
+    relativeDistance = phase.startRelativeDistance + phase.startRelativeSpeed * elapsed;
+  } else {
+    const finalRapidity = Math.atanh(
+      Math.max(-1 + Number.EPSILON, Math.min(1 - Number.EPSILON, phase.endRelativeSpeed / c)),
+    );
+    const peakSinh = Math.sinh(sampling.peakRapidity);
+    const finalSinh = Math.sinh(finalRapidity);
+    const fraction = phase.coordinateDuration <= 0 ? 1 : elapsed / phase.coordinateDuration;
+    const rapidity = Math.asinh(peakSinh + (finalSinh - peakSinh) * fraction);
+    relativeDistance =
+      phase.startRelativeDistance +
+      (c ** 2 / brakingAcceleration) * (Math.cosh(sampling.peakRapidity) - Math.cosh(rapidity));
+    relativeSpeed = c * Math.tanh(rapidity);
+  }
+  const lateral = transferLateralState(sampling, phase.kind, elapsed);
+  return {
+    position: phasePosition(
+      departurePosition,
+      departureVelocity,
+      direction,
+      phase.startCoordinateTime + elapsed,
+      relativeDistance,
+      lateral.position,
+    ),
+    velocity: phaseVelocity(departureVelocity, direction, relativeSpeed, lateral.velocity),
+  };
+}
+
+function sampleProfileProperTime(
+  sampling: InSystemTransferSamplingModel,
+  phase: InSystemTransferSamplingPhase,
+  elapsed: number,
+): number {
+  if (elapsed <= 0) {
+    return 0;
+  }
+  if (elapsed >= phase.coordinateDuration) {
+    return phase.properDuration;
+  }
+  const samples = 32;
+  const c = SPEED_OF_LIGHT.value;
+  let sum = 0;
+  for (let index = 0; index <= samples; index += 1) {
+    const sample = sampleProfileState(sampling, phase, (elapsed * index) / samples);
+    const speedRatio = vectorMagnitude(sample.velocity) / c;
+    const rate = speedRatio >= 1 ? 0 : Math.sqrt(Math.max(0, 1 - speedRatio ** 2));
+    const coefficient = index === 0 || index === samples ? 1 : index % 2 === 0 ? 2 : 4;
+    sum += coefficient * rate;
+  }
+  return (elapsed / (3 * samples)) * sum;
+}
+
+function solveGeneralRapidity(
+  targetClusterTime: number,
+  maximumRapidity: number,
+  clusterTimeForRapidity: (rapidity: number) => number,
+): number {
+  if (maximumRapidity <= Number.EPSILON || targetClusterTime <= 0) {
+    return 0;
+  }
+  let lower = 0;
+  let upper = maximumRapidity;
+  for (let iteration = 0; iteration < 96; iteration += 1) {
+    const middle = (lower + upper) / 2;
+    if (clusterTimeForRapidity(middle) < targetClusterTime) {
+      lower = middle;
+    } else {
+      upper = middle;
+    }
+  }
+  return (lower + upper) / 2;
+}
+
+function sampleGeneralState(
+  timeline: InSystemTransferTimeline,
+  sampling: InSystemTransferSamplingModel,
+  phaseIndex: number,
+  phase: InSystemTransferSamplingPhase,
+  elapsed: number,
+): {
+  readonly position: NumericVector3;
+  readonly velocity: NumericVector3;
+  readonly properTime: number;
+} {
+  const c = SPEED_OF_LIGHT.value;
+  const departureVelocity = numericSamplingVector(sampling.departureVelocity);
+  const departurePosition = numericSamplingVector(sampling.departurePosition);
+  const timelinePhase = timeline.phases[phaseIndex];
+  if (timelinePhase === undefined) {
+    throw new RangeError(`Transfer phase ${String(phaseIndex)} is unavailable.`);
+  }
+  if (phase.kind === "coast") {
+    const startPosition = numericPosition(timelinePhase.startPosition);
+    const startVelocity = numericVelocity(timelinePhase.startVelocity);
+    return {
+      position: addVector(startPosition, scaleVector(startVelocity, elapsed)),
+      velocity: startVelocity,
+      properTime:
+        phase.properDuration <= 0 ? 0 : (phase.properDuration * elapsed) / phase.coordinateDuration,
+    };
+  }
+  if (phase.kind === "acceleration") {
+    const peakRapidityVector = numericSamplingVector(
+      sampling.peakRapidityVector ?? sampling.direction,
+    );
+    const peakRapidity = vectorMagnitude(peakRapidityVector);
+    const direction = unitVector(peakRapidityVector) ?? zeroVector;
+    const localEventForRapidity = (rapidity: number): FourEvent => ({
+      time: (c / sampling.acceleration) * Math.sinh(rapidity),
+      position: scaleVector(
+        direction,
+        (c ** 2 / sampling.acceleration) * (Math.cosh(rapidity) - 1),
+      ),
+    });
+    const rapidity = solveGeneralRapidity(
+      phase.startCoordinateTime + elapsed,
+      peakRapidity,
+      (value) => boostEventFromRest(localEventForRapidity(value), departureVelocity).time,
+    );
+    const relativeVelocity = scaleVector(direction, c * Math.tanh(rapidity));
+    const localEvent = localEventForRapidity(rapidity);
+    const clusterEvent = boostEventFromRest(localEvent, departureVelocity);
+    const velocity = velocityFromFour(
+      boostVelocityFromRest(fourVelocity(relativeVelocity), departureVelocity),
+    );
+    return {
+      position: addVector(departurePosition, clusterEvent.position),
+      velocity,
+      properTime: (c / sampling.acceleration) * rapidity,
+    };
+  }
+  const brakingDirection = numericSamplingVector(sampling.brakingDirection ?? sampling.direction);
+  const brakingRapidity = sampling.brakingRapidity ?? 0;
+  const peakVelocity = numericSamplingVector(sampling.peakVelocity ?? zeroVector);
+  const brakingEventForRapidity = (rapidity: number): FourEvent => ({
+    time: (c / sampling.brakingAcceleration) * Math.sinh(rapidity),
+    position: scaleVector(
+      brakingDirection,
+      (c ** 2 / sampling.brakingAcceleration) * (Math.cosh(rapidity) - 1),
+    ),
+  });
+  const coastEndRestEvent = sampling.coastEndRestEvent;
+  if (coastEndRestEvent === undefined) {
+    throw new RangeError("General transfer sampling is missing its coast-end event.");
+  }
+  const rapidity = solveGeneralRapidity(
+    phase.startCoordinateTime + elapsed,
+    brakingRapidity,
+    (value) =>
+      boostEventFromRest(
+        addEvents(coastEndRestEvent, brakingEventForRapidity(value)),
+        departureVelocity,
+      ).time,
+  );
+  const brakingEventInPeakRest = brakingEventForRapidity(rapidity);
+  const brakingEvent = boostEventFromRest(brakingEventInPeakRest, peakVelocity);
+  const totalRestEvent = addEvents(
+    {
+      time: coastEndRestEvent.time,
+      position: numericSamplingVector(coastEndRestEvent.position),
+    },
+    brakingEvent,
+  );
+  const clusterEvent = boostEventFromRest(totalRestEvent, departureVelocity);
+  const relativeVelocity = scaleVector(brakingDirection, c * Math.tanh(rapidity));
+  const departureRestVelocity = velocityFromFour(
+    boostVelocityFromRest(fourVelocity(relativeVelocity), peakVelocity),
+  );
+  const velocity = velocityFromFour(
+    boostVelocityFromRest(fourVelocity(departureRestVelocity), departureVelocity),
+  );
+  return {
+    position: addVector(departurePosition, clusterEvent.position),
+    velocity,
+    properTime: (c / sampling.brakingAcceleration) * rapidity,
+  };
+}
+
+/**
+ * Samples a powered In-system Transfer at an arbitrary elapsed Cluster Coordinate Time.
+ *
+ * The returned position and velocity come from the transfer's stored relativistic solution. The
+ * function is the only continuous-transfer seam used by Journey playback; callers must not
+ * interpolate the phase endpoints themselves.
+ *
+ * @param timeline - The complete transfer timeline and its exact sampling coefficients.
+ * @param elapsed - Elapsed Cluster Coordinate Time from transfer departure.
+ * @returns An immutable exact transfer state at the clamped elapsed time.
+ */
+export function sampleInSystemTransferAt(
+  timeline: InSystemTransferTimeline,
+  elapsed: Seconds | number,
+): InSystemTransferSample {
+  const requested = typeof elapsed === "number" ? elapsed : elapsed.value;
+  const totalDuration = timeline.totalClusterCoordinateTime.value;
+  const clamped = clampTransferElapsed(requested, totalDuration);
+  const sampling = timeline.sampling;
+  const phaseIndex = transferPhaseIndex(sampling, clamped);
+  const phase = sampling.phases[phaseIndex];
+  const timelinePhase = timeline.phases[phaseIndex];
+  if (
+    timelinePhase !== undefined &&
+    (Math.abs(clamped - timelinePhase.start.clusterCoordinateTime.value) <=
+      TRANSFER_SAMPLING_EPSILON ||
+      Math.abs(clamped - totalDuration) <= TRANSFER_SAMPLING_EPSILON)
+  ) {
+    return Object.freeze({
+      elapsed: seconds(clamped),
+      phaseIndex,
+      phase: phase?.kind ?? timelinePhase.kind,
+      position:
+        Math.abs(clamped - totalDuration) <= TRANSFER_SAMPLING_EPSILON
+          ? timeline.arrivalPosition
+          : timelinePhase.startPosition,
+      velocity:
+        Math.abs(clamped - totalDuration) <= TRANSFER_SAMPLING_EPSILON
+          ? timeline.arrivalVelocity
+          : timelinePhase.startVelocity,
+      properTime:
+        Math.abs(clamped - totalDuration) <= TRANSFER_SAMPLING_EPSILON
+          ? timeline.totalShipProperTime
+          : timelinePhase.start.shipProperTime,
+    });
+  }
+  if (phase === undefined) {
+    return Object.freeze({
+      elapsed: seconds(clamped),
+      phaseIndex: 0,
+      phase: "braking" as const,
+      position: timeline.arrivalPosition,
+      velocity: timeline.arrivalVelocity,
+      properTime: timeline.totalShipProperTime,
+    });
+  }
+  const localElapsed = clampTransferElapsed(
+    clamped - phase.startCoordinateTime,
+    phase.coordinateDuration,
+  );
+  if (sampling.kind === "general") {
+    const sampled = sampleGeneralState(timeline, sampling, phaseIndex, phase, localElapsed);
+    return Object.freeze({
+      elapsed: seconds(clamped),
+      phaseIndex,
+      phase: phase.kind,
+      position: positionVector(sampled.position),
+      velocity: velocityVector(sampled.velocity),
+      properTime: seconds(phase.startProperTime + sampled.properTime),
+    });
+  }
+  const sampled = sampleProfileState(sampling, phase, localElapsed);
+  return Object.freeze({
+    elapsed: seconds(clamped),
+    phaseIndex,
+    phase: phase.kind,
+    position: positionVector(sampled.position),
+    velocity: velocityVector(sampled.velocity),
+    properTime: seconds(
+      phase.startProperTime + sampleProfileProperTime(sampling, phase, localElapsed),
+    ),
   });
 }
 

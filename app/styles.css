@@ -271,6 +271,10 @@ h2 {
   color: var(--red);
 }
 
+.status-neutral {
+  color: var(--muted);
+}
+
 .control-group {
   display: grid;
   gap: 12px;
@@ -749,6 +753,228 @@ pre {
   white-space: pre-wrap;
 }
 
+.journey-playback-card {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid rgba(140, 224, 197, 0.32);
+  border-radius: 16px;
+  background: radial-gradient(circle at 92% 0%, rgba(140, 224, 197, 0.12), transparent 20rem),
+    linear-gradient(145deg, rgba(23, 35, 38, 0.96), rgba(14, 22, 25, 0.98));
+  box-shadow: var(--shadow);
+}
+
+.journey-playback-controls,
+.journey-playback-options,
+.journey-playback-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 9px;
+}
+
+.journey-scrubber,
+.journey-playback-options label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.journey-scrubber {
+  grid-template-columns: auto minmax(140px, 1fr) auto;
+  align-items: center;
+}
+
+.journey-scrubber input {
+  width: 100%;
+  accent-color: var(--mint-strong);
+}
+
+.journey-arrival-overlay {
+  position: relative;
+  grid-column: 2 / 3;
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(242, 200, 121, 0.35);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.journey-arrival-window {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  min-width: 2px;
+  border-radius: inherit;
+  background: rgba(242, 200, 121, 0.8);
+}
+
+.journey-arrival-nominal {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 3px;
+  transform: translateX(-1px);
+  background: var(--mint);
+  box-shadow: 0 0 8px var(--mint);
+}
+
+.journey-arrival-key {
+  display: flex;
+  grid-column: 2 / 4;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.journey-arrival-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.journey-arrival-key-window,
+.journey-arrival-key-nominal {
+  display: inline-block;
+  width: 14px;
+  height: 5px;
+  border-radius: 999px;
+}
+
+.journey-arrival-key-window {
+  background: rgba(242, 200, 121, 0.8);
+}
+
+.journey-arrival-key-nominal {
+  width: 3px;
+  border-radius: 0;
+  background: var(--mint);
+}
+
+.journey-scrubber output,
+.journey-playback-meta,
+.journey-playback-mode {
+  color: var(--mint);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.68rem;
+}
+
+.journey-playback-options {
+  align-items: stretch;
+}
+
+.journey-playback-options label {
+  flex: 1 1 210px;
+}
+
+.journey-playback-mode {
+  margin: 0;
+  color: var(--amber);
+  line-height: 1.5;
+}
+
+.journey-clock-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin: 0;
+}
+
+.journey-clock-grid > div {
+  padding: 11px;
+  border: 1px solid rgba(140, 224, 197, 0.15);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.journey-clock-grid dt {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.journey-clock-grid dd {
+  margin: 7px 0 0;
+  color: var(--mint);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.75rem;
+}
+
+.journey-playback-meta {
+  color: var(--muted);
+}
+
+.journey-playback-meta strong {
+  color: var(--ink);
+}
+
+.journey-inspection {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  line-height: 1.5;
+}
+
+.journey-inspection p:last-child {
+  margin-bottom: 0;
+}
+
+.journey-discrepancy-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.journey-discrepancy-list h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.82rem;
+}
+
+.journey-discrepancy {
+  padding: 11px;
+  border: 1px solid rgba(242, 200, 121, 0.3);
+  border-radius: 9px;
+  background: rgba(242, 200, 121, 0.05);
+}
+
+.journey-discrepancy h4 {
+  margin: 0 0 6px;
+  color: var(--amber);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.72rem;
+}
+
+.journey-discrepancy p {
+  margin-bottom: 6px;
+}
+
+.journey-discrepancy-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.journey-discrepancy-columns > div {
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.journey-discrepancy-columns strong {
+  color: var(--ink);
+  font-size: 0.72rem;
+}
+
+.cluster-journey-inspection {
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
 .app-footer {
   display: flex;
   justify-content: space-between;
@@ -827,7 +1053,9 @@ pre {
     padding: 17px;
   }
 
-  .metric-grid {
+  .metric-grid,
+  .journey-clock-grid,
+  .journey-discrepancy-columns {
     grid-template-columns: 1fr;
   }
 

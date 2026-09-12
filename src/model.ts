@@ -17,7 +17,13 @@ import {
 } from "./quantities";
 import { evaluateScenarioWorldlines as resolveScenarioWorldlines } from "./orbital";
 import { simulateInSystemTransfer } from "./in-system-transfer";
-import { simulateJourney, simulateMultiLegJourney } from "./simulation";
+import {
+  sampleJourney,
+  sampleJourneyAt,
+  simulateJourney,
+  simulateMultiLegJourney,
+  stepJourneyEvent,
+} from "./simulation";
 import { planJourney, planRoute } from "./route-planning";
 import type { RoutePlanningRequest, RoutePlanningResult } from "./route-planning";
 import {
@@ -53,8 +59,10 @@ import type {
 import type {
   InterstellarCruiseRequest,
   JourneyRequest,
+  JourneySampleResult,
   JourneySimulationResult,
   MultiLegJourneySimulationResult,
+  MultiLegJourneyTimeline,
 } from "./simulation";
 import {
   createCitation,
@@ -738,6 +746,23 @@ export type JourneyModel = {
     scenario: CompiledScenario,
     coordinateTime: Seconds,
   ) => ScenarioWorldlineResult;
+  readonly sampleJourneyAt: (
+    scenario: CompiledScenario,
+    timeline: MultiLegJourneyTimeline,
+    coordinateTime: Seconds | number,
+    eventIndex?: number | undefined,
+  ) => JourneySampleResult;
+  readonly sampleJourney: (
+    scenario: CompiledScenario,
+    timeline: MultiLegJourneyTimeline,
+    coordinateTime: Seconds | number,
+    eventIndex?: number | undefined,
+  ) => JourneySampleResult;
+  readonly stepJourneyEvent: (
+    timeline: MultiLegJourneyTimeline,
+    eventIndex: number | undefined,
+    direction: "next" | "previous",
+  ) => number | undefined;
   readonly simulateJourney: {
     (
       scenario: CompiledScenario,
@@ -4581,6 +4606,9 @@ export function createJourneyModel(
     inspectScenario,
     formatScenarioInspection,
     evaluateWorldlines,
+    sampleJourneyAt,
+    sampleJourney,
+    stepJourneyEvent,
     simulateJourney,
     simulateMultiLegJourney,
     simulateInSystemTransfer,

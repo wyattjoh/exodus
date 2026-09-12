@@ -7,6 +7,7 @@ import {
   metersPerSecond,
   multiLegJourneyRequest,
   multiLegJourneyScenario,
+  sampleJourneyAt,
   seconds,
   vector3,
   type ScenarioInput,
@@ -281,21 +282,36 @@ describe("AU-scale System explorer projection seam", () => {
     expect(interior.coordinateTime.value).toBe(flip.coordinateTime.value);
     expect(interior.clocks).toEqual(flip.clocks);
 
+    const sample = sampleJourneyAt(
+      scenario,
+      result.timeline,
+      seconds(
+        flip.coordinateTime.value +
+          (arrival.coordinateTime.value - flip.coordinateTime.value) * 0.25,
+      ),
+    );
+    expect(sample.ok).toBe(true);
+    if (!sample.ok) {
+      return;
+    }
     const scene = buildSystemExplorerScene({
       model,
       scenario,
       systemId: "system:aurora",
-      coordinateTime: flip.coordinateTime,
+      coordinateTime: sample.state.coordinateTime,
       journey: result.timeline,
       selectedGateIds: undefined,
       orbitSampleCount: undefined,
       timelineEventIndex: flipIndex,
+      journeySample: sample.state,
     });
     if (scene.activeJourney === undefined) {
       throw new Error("Expected the scene to expose active Journey state.");
     }
-    expect(scene.activeJourney.eventIndex).toBe(flipIndex);
-    expect(scene.activeJourney.event?.kind).toBe("transfer-flip");
+    expect(scene.activeJourney.eventIndex).toBe(sample.state.eventIndex);
+    expect(scene.activeJourney.event).toBe(sample.state.event);
+    expect(scene.activeJourney.coordinateTime.value).toBe(sample.state.coordinateTime.value);
+    expect(scene.activeJourney.shipPosition).toEqual(sample.state.shipPosition);
     expect(scene.trajectory?.activeSegment?.kind).toBe("braking");
     expect(scene.trajectory?.activeSegment?.endCoordinateTime.value).toBeGreaterThanOrEqual(
       flip.coordinateTime.value,

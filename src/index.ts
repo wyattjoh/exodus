@@ -154,6 +154,32 @@ export {
   IN_SYSTEM_TRANSFER_VELOCITY_RESIDUAL_TOLERANCE,
   simulateInSystemTransfer,
 } from "./in-system-transfer";
+export {
+  DEFAULT_ROUTE_PLANNING_MAX_ALTERNATIVES,
+  DEFAULT_ROUTE_PLANNING_SEARCH_BUDGET,
+  MAX_ROUTE_PLANNING_BUDGET,
+  planJourney,
+  planRoute,
+} from "./route-planning";
+export type {
+  ExplicitRoutePlan,
+  JourneyPlanningRequest,
+  JourneyPlanningResult,
+  JourneyRouteDwell,
+  JourneyRoutePlan,
+  RouteDwellSelection,
+  RoutePlan,
+  RoutePlanSummary,
+  RoutePlanningFailure,
+  RoutePlanningSearchBudget,
+  RoutePlanningSearchStats,
+  RoutePlanningIssue,
+  RoutePlanningIssueCode,
+  RoutePlanningOutcome,
+  RoutePlanningRequest,
+  RoutePlanningResult,
+  RoutePlanningSuccess,
+} from "./route-planning";
 export type {
   InSystemTransferEvent,
   InSystemTransferEventKind,

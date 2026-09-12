@@ -2,9 +2,9 @@
 
 The headless Journey Model is a Bun and TypeScript module for compiling and inspecting a
 validated Centauri Cluster Scenario, simulating Interstellar Cruises between hierarchical,
-Keplerian Gate worldlines, and simulating powered In-system Transfers between moving Gates.
-Procedural generation, route planning, workers, and the browser application are implemented by
-later tickets.
+Keplerian Gate worldlines, simulating powered In-system Transfers between moving Gates, and
+planning earliest-arrival Journeys through a finite explicit Gate network. Procedural generation,
+workers, and the browser application are implemented by later tickets.
 
 ## Commands
 
@@ -66,6 +66,21 @@ remain explicit zero-duration phases, powered transfer detail is retained in eac
 proper time is integrated from the Gate worldline. Its cumulative clocks are exposed through
 `timeline.clocks`; `multiLegJourneyScenario` and `multiLegJourneyRequest` provide a deterministic
 end-to-end public-seam fixture.
+
+`planJourney` (also exported as `planRoute` and available on `createJourneyModel()`) exhaustively
+expands a finite explicit Gate network. Every compiled Gate must belong to exactly one
+bidirectional Gate Connection; changing to another Gate in one System inserts a powered
+In-system Transfer before the next Cruise. Requests may select Gate Dwells, which are carried
+into every candidate simulation. The successful result ranks nominal final Cluster Coordinate
+Time, returns the complete winning `MultiLegJourneyTimeline`, selected `gateIds` and
+`connectionIds`, and exposes a capped set of non-winning `alternatives`. Each Route Plan also
+reports nominal `clusterCoordinateTime`, `shipProperTime`, `agingDifference`, and `gateLegCount`.
+The exact search has a finite `RoutePlanningSearchBudget` (10,000 candidates and 100,000 search
+states by default); if that budget is exhausted, the planner returns an `incomplete` structured
+outcome without presenting a partial plan as globally earliest. `maxAlternatives` only limits
+retained output and never limits the exact search. Disconnected topology and invalid requests are
+returned as structured failure outcomes. Strategic Dwell optimization and generated-network
+approximation are intentionally not part of this explicit planner.
 
 ## Provenance, claims, and uncertainty
 

@@ -3,8 +3,9 @@
 The headless Journey Model is a Bun and TypeScript module for compiling and inspecting a
 validated Centauri Cluster Scenario, simulating Interstellar Cruises between hierarchical,
 Keplerian Gate worldlines, simulating powered In-system Transfers between moving Gates, and
-planning earliest-arrival Journeys through a finite explicit Gate network. Procedural generation,
-workers, and the browser application are implemented by later tickets.
+planning earliest-arrival Journeys through a finite explicit Gate network. The CPU reference
+also generates deterministic, provenance-marked Cluster regions; workers and the browser
+application are implemented by later tickets.
 
 ## Commands
 
@@ -90,6 +91,30 @@ by default), and strategic-wait evaluation has its own fixed candidate ceiling. 
 is exhausted, the planner returns an `incomplete` structured outcome without presenting a partial
 plan as globally earliest. `maxAlternatives` only limits retained output and never limits the
 search. Disconnected topology and invalid requests are returned as structured failure outcomes.
+
+`generateClusterRegion` (also exported as `generateClusterScenario` and
+`generateRoutableClusterRegion`, and available on `createJourneyModel()`) accepts a logical
+population, seed, and generator version. It
+materializes a finite region—64 Systems by default for a large logical population and at most
+4,096 Systems per request (never more than the logical population)—using a truncated Plummer
+radial profile, a deterministic nearest-neighbour connectivity backbone, and
+rare deterministic long-distance shortcuts. Every generated System, Orbital Anchor, Gate, and
+Gate Connection has a stable seed/version-derived identifier and designation. Numeric seeds and
+string seeds are type-tagged separately; string seed text, including surrounding whitespace, is
+significant. The logical population is retained as a provisional Scenario property; the finite
+sample's observed and expected truncated-Plummer concentration statistics and topology accounting
+are returned explicitly, so a finite sample is not presented as a proof of an infinite-population
+distribution. `topology.localLinkFraction` uses endpoint distance rather than connection labels:
+links no farther than one quarter of `regionRadius` are local, while shortcut selection targets
+links at least 45% of the region radius apart.
+
+The generator compiles its output through `compileScenario` and immediately calls `planJourney`
+for a paired generated Gate endpoint, returning the complete `RoutePlan` and
+`MultiLegJourneyTimeline` in `plan`/`journeyTimeline`. An optional canonical base Scenario is
+copied without changing canonical identities; missing physical properties receive generated
+property-level Provenance. When no Ship Profile is supplied, the route uses the explicit
+provisional 1g ZPZ-capable profile `ship:generated-survey`. Changing the seed changes generated
+IDs and values while leaving copied canonical entities unchanged.
 
 ## Provenance, claims, and uncertainty
 

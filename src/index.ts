@@ -242,3 +242,20 @@ export {
   multiLegJourneyRequest,
   multiLegJourneyScenario,
 } from "./minimal-scenario";
+export {
+  DEFAULT_CLUSTER_GENERATOR_VERSION,
+  DEFAULT_CLUSTER_MATERIALIZED_SYSTEM_COUNT,
+  DEFAULT_CLUSTER_REGION_RADIUS,
+  DEFAULT_CLUSTER_ROUTE_HORIZON,
+  MAX_CLUSTER_MATERIALIZED_SYSTEM_COUNT,
+  generateClusterRegion,
+  generateClusterScenario,
+  generateRoutableClusterRegion,
+} from "./cluster-generation";
+export type {
+  ClusterGenerationRequest,
+  ClusterGenerationSeed,
+  ClusterGenerationStatistics,
+  ClusterTopologyStatistics,
+  GeneratedClusterRegion,
+} from "./cluster-generation";

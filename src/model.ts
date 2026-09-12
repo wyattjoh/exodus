@@ -20,6 +20,8 @@ import { simulateInSystemTransfer } from "./in-system-transfer";
 import { simulateJourney, simulateMultiLegJourney } from "./simulation";
 import { planJourney, planRoute } from "./route-planning";
 import type { RoutePlanningRequest, RoutePlanningResult } from "./route-planning";
+import { generateClusterRegion } from "./cluster-generation";
+import type { ClusterGenerationRequest, GeneratedClusterRegion } from "./cluster-generation";
 import type {
   InSystemTransferRequest,
   InSystemTransferSimulationResult,
@@ -631,6 +633,7 @@ export type JourneyModel = {
     scenario: CompiledScenario,
     request: RoutePlanningRequest | unknown,
   ) => RoutePlanningResult;
+  readonly generateClusterRegion: (request: ClusterGenerationRequest) => GeneratedClusterRegion;
   readonly applyScenarioOverrides: (
     scenario: CompiledScenario,
     layers: readonly ScenarioOverrideLayerInput[],
@@ -3587,7 +3590,7 @@ export function formatScenarioInspection(inspection: ScenarioInspection): string
  * The current implementation is stateless: all Scenario data is supplied to each operation and
  * all results are returned as immutable values.
  *
- * @returns A Journey Model adapter exposing compilation, inspection, worldline evaluation, simulation, and explicit-network route-planning operations.
+ * @returns A Journey Model adapter exposing compilation, generation, inspection, worldline evaluation, simulation, and explicit-network route-planning operations.
  */
 export function createJourneyModel(): JourneyModel {
   return Object.freeze({
@@ -3600,6 +3603,7 @@ export function createJourneyModel(): JourneyModel {
     simulateInSystemTransfer,
     planJourney,
     planRoute,
+    generateClusterRegion,
     applyScenarioOverrides,
     compareScenarioOverrides,
     revertScenarioOverride,

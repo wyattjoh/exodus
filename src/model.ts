@@ -20,8 +20,19 @@ import { simulateInSystemTransfer } from "./in-system-transfer";
 import { simulateJourney, simulateMultiLegJourney } from "./simulation";
 import { planJourney, planRoute } from "./route-planning";
 import type { RoutePlanningRequest, RoutePlanningResult } from "./route-planning";
-import { generateClusterRegion } from "./cluster-generation";
-import type { ClusterGenerationRequest, GeneratedClusterRegion } from "./cluster-generation";
+import {
+  generateClusterRegion,
+  generateHierarchicalCluster,
+  materializeClusterRegion,
+  planClusterRoute,
+} from "./cluster-generation";
+import type {
+  ClusterGenerationRequest,
+  ClusterRegionMaterializationRequest,
+  ClusterRoutePlanningResult,
+  GeneratedClusterRegion,
+  HierarchicalClusterRegion,
+} from "./cluster-generation";
 import type {
   InSystemTransferRequest,
   InSystemTransferSimulationResult,
@@ -633,7 +644,18 @@ export type JourneyModel = {
     scenario: CompiledScenario,
     request: RoutePlanningRequest | unknown,
   ) => RoutePlanningResult;
+  readonly planClusterRoute: (
+    hierarchy: HierarchicalClusterRegion,
+    request: unknown,
+  ) => ClusterRoutePlanningResult;
   readonly generateClusterRegion: (request: ClusterGenerationRequest) => GeneratedClusterRegion;
+  readonly generateHierarchicalCluster: (
+    request: ClusterGenerationRequest,
+  ) => HierarchicalClusterRegion;
+  readonly materializeClusterRegion: (
+    region: HierarchicalClusterRegion | GeneratedClusterRegion,
+    request?: ClusterRegionMaterializationRequest,
+  ) => GeneratedClusterRegion;
   readonly applyScenarioOverrides: (
     scenario: CompiledScenario,
     layers: readonly ScenarioOverrideLayerInput[],
@@ -3603,7 +3625,10 @@ export function createJourneyModel(): JourneyModel {
     simulateInSystemTransfer,
     planJourney,
     planRoute,
+    planClusterRoute,
     generateClusterRegion,
+    generateHierarchicalCluster,
+    materializeClusterRegion,
     applyScenarioOverrides,
     compareScenarioOverrides,
     revertScenarioOverride,

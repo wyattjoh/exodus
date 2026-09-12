@@ -116,6 +116,41 @@ property-level Provenance. When no Ship Profile is supplied, the route uses the 
 provisional 1g ZPZ-capable profile `ship:generated-survey`. Changing the seed changes generated
 IDs and values while leaving copied canonical entities unchanged.
 
+`generateHierarchicalCluster` creates the same seeded population as a lazy hierarchy of bounded
+logical regions. A hierarchy for a ten-million-System population contains only region descriptors
+and reports `materializedSystemCount: 0`; `materializeClusterRegion` (or the descriptor's
+`materialize` method) realizes one node or an explicit logical-index selection, capped at
+`MAX_CLUSTER_MATERIALIZED_SYSTEM_COUNT`. Materialization is immutable and repeatable, so repeated
+requests with the same seed, generator version, node, and selection produce the same entities.
+
+`planClusterRoute` plans between exact deterministic hierarchical Gate endpoints without expanding
+the logical population. `refinementDepth`, `maxMaterializedSystems`, and `maxCandidateRoutes`
+form a finite refinement budget. The result reports `bestKnownUpperBound` (the nominal arrival of
+a feasible simulated plan), an admissible `earliestArrivalLowerBound`, conservative uncertainty
+bounds, `refinementScore` (the normalized tightness of that reported interval), and
+`optimality: "best-known-upper-bound"`; it never reports a hierarchical result as globally
+optimal. Deeper requests add candidate edges to the shallower
+candidate graph, preserving the best-known upper bound while retaining the normal route planner's
+uncertainty, Provenance filtering, exact endpoint, horizon, Dwell, and strategic-wait behavior.
+Generated `region-*` endpoint identities are accepted only after the hierarchy has emitted those
+exact Gates through materialization; canonical/base Gate IDs route through the compiled base
+Scenario, while mixed canonical/generated endpoints are rejected without rewriting either ID.
+`maxCandidateRoutes` is an end-to-end cap on inner candidate Route Plans across the bounded query;
+`search.candidateRoutesEvaluated` reports the actual count, and `refinement.searchExhausted` marks
+when optional refinement could not be completed within that cap.
+
+Run the representative CPU benchmark with:
+
+```sh
+bun run benchmark:cluster-route
+```
+
+It emits JSON for 100k, 1m, and 10m logical populations, including hierarchy node count and
+latency, process RSS deltas for hierarchy construction and 64-System materialization, route
+latency at refinement depths 0/3/6, materialized counts, lower/upper arrival bounds, and
+refinement scores. RSS and latency are machine-specific evidence rather than universal timing
+assertions; use the output to compare regressions on the target machine.
+
 ## Provenance, claims, and uncertainty
 
 The public model keeps source metadata at property level. Use `novelProvenance` or

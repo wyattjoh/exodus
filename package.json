@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "demo": "bun run scripts/minimal-scenario.ts",
+    "benchmark:cluster-route": "bun run scripts/cluster-route-benchmark.ts",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",

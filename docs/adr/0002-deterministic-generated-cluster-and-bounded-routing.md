@@ -1,3 +1,15 @@
 # Generate a deterministic cluster and permit bounded routing
 
 Represent the unresolved cluster population through versioned, seeded, provenance-marked generation using a globular density profile and mostly local gate links with rare shortcuts. Because millions of logical Systems cannot all be materialized for every browser route search, permit hierarchical bounded-approximation routing, disclose its guarantees, and allow deeper refinement instead of claiming every generated route is globally optimal.
+
+## Consequences
+
+- `generateHierarchicalCluster` builds only deterministic region descriptors. A node owns a contiguous logical System range and is materialized on demand; the hierarchy itself reports zero materialized Systems.
+- Materialization is immutable and bounded. The CPU reference accepts at most `MAX_CLUSTER_MATERIALIZED_SYSTEM_COUNT` Systems for one finite operation, and explicit logical indices are sorted and validated before entity creation.
+- Hierarchical route planning evaluates a finite candidate graph through the ordinary `planJourney` seam. This preserves exact Gate endpoints, route Provenance filters, uncertainty propagation, user Dwells, strategic-wait horizons, and the existing failure outcomes.
+- A successful hierarchical route is a feasible upper bound, never a proof of global optimality. The result carries an admissible earliest-arrival lower bound, conservative uncertainty bounds, a bound-tightness refinement score, and an explicit `best-known-upper-bound` optimality label.
+- Refinement candidates are cumulative: a deeper candidate graph contains all shallower edges and the baseline is evaluated first. If supplemental search exhausts its budget, the feasible baseline remains the result and the refinement report marks exhaustion; this makes the nominal best-known upper bound monotonic under deeper refinement while keeping the candidate and materialization budgets finite.
+- `maxCandidateRoutes` is an end-to-end cap on inner explicit-planner candidate evaluations, not merely a count of logical graphs. Hierarchical search clamps each delegated planner call to the remaining budget and reports actual work in `search.candidateRoutesEvaluated`.
+- Hierarchical `h-a-b` Gate identities are accepted only when `a` is the deterministic `logicalParentIndex(b)` and both indices are in the logical population, preventing forged logical edges from inventing topology. `region-a-b` identities are accepted only after the exact generated Gate is emitted by a hierarchy materialization.
+- Canonical/base Gate endpoints are resolved through a compiled base Scenario and preserve their exact IDs, connections, and Provenance. Mixed canonical/generated endpoint pairs are rejected structurally rather than rewritten into synthetic topology.
+- `scripts/cluster-route-benchmark.ts` reports hierarchy/materialization latency and RSS observations plus route latency, bounds, candidate counts, and refinement scores at 100k, 1m, and 10m logical populations. These are target-machine regression evidence, not brittle timing guarantees.

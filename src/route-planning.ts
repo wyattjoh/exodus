@@ -61,7 +61,15 @@ export type RoutePlanningSearchBudget = {
 /**
  * Quality of the nominal result reported by the bounded route planner.
  */
-export type RoutePlanningRefinementQuality = "exact" | "bounded-strategic-dwell";
+export type RoutePlanningRefinementQuality =
+  | "exact"
+  | "bounded-strategic-dwell"
+  | "hierarchical-bounded";
+
+/**
+ * The optimality claim attached to a Route Plan.
+ */
+export type RoutePlanningOptimality = "proven-optimal" | "best-known-upper-bound";
 
 /**
  * Default finite budget used when a route request does not provide one.
@@ -234,6 +242,17 @@ export type RoutePlan = {
   readonly strategicDwells: readonly StrategicDwellInsertion[];
   readonly strategicWaitDuration: Seconds;
   readonly refinementQuality: RoutePlanningRefinementQuality;
+  /** A normalized 0..1 measure of how much of the declared search domain was refined. */
+  readonly refinementScore: number;
+  /** True only when the planner has an exact proof for its declared search domain. */
+  readonly globallyOptimal: boolean;
+  readonly optimality: RoutePlanningOptimality;
+  /** An admissible absolute earliest-arrival lower bound for the declared search domain. */
+  readonly earliestArrivalLowerBound: Seconds;
+  /** The nominal arrival of this feasible plan, which is an upper bound on the optimum. */
+  readonly bestKnownUpperBound: Seconds;
+  readonly lowerBound: Seconds;
+  readonly upperBound: Seconds;
   readonly legs: readonly JourneyLeg[];
   readonly timeline: MultiLegJourneyTimeline;
   readonly uncertainty: RouteUncertaintySummary;
@@ -308,6 +327,13 @@ export type RoutePlanningSuccess = {
   readonly sensitivityAlternatives: readonly RouteSensitivity[];
   readonly refinementQuality: RoutePlanningRefinementQuality;
   readonly search: RoutePlanningSearchStats;
+  /** An admissible absolute earliest-arrival lower bound for the returned search domain. */
+  readonly earliestArrivalLowerBound: Seconds;
+  /** The nominal arrival of the best feasible plan, an upper bound on the optimum. */
+  readonly bestKnownUpperBound: Seconds;
+  readonly bounds: ConservativeBounds<Seconds>;
+  readonly globallyOptimal: boolean;
+  readonly optimality: RoutePlanningOptimality;
   readonly issues: readonly [];
 };
 
@@ -325,6 +351,11 @@ export type RoutePlanningFailure = {
   readonly sensitivityAlternatives: readonly [];
   readonly refinementQuality: undefined;
   readonly search: RoutePlanningSearchStats | undefined;
+  readonly earliestArrivalLowerBound: undefined;
+  readonly bestKnownUpperBound: undefined;
+  readonly bounds: undefined;
+  readonly globallyOptimal: false;
+  readonly optimality: undefined;
   readonly issues: readonly RoutePlanningIssue[];
 };
 
@@ -453,6 +484,11 @@ function failure(
     sensitivityAlternatives: Object.freeze([] as const),
     refinementQuality: undefined,
     search,
+    earliestArrivalLowerBound: undefined,
+    bestKnownUpperBound: undefined,
+    bounds: undefined,
+    globallyOptimal: false,
+    optimality: undefined,
     issues: Object.freeze(sortedIssues),
   });
 }
@@ -1684,6 +1720,13 @@ function createRoutePlan(
     path.gateIds[0] !== path.gateIds.at(-1)
       ? "bounded-strategic-dwell"
       : "exact";
+  const earliestArrivalLowerBound = request.departureCoordinateTime;
+  const bestKnownUpperBound = timeline.arrivalCoordinateTime;
+  const refinementScore = refinementQuality === "exact" ? 1 : 0.5;
+  const globallyOptimal = refinementQuality === "exact";
+  const optimality: RoutePlanningOptimality = globallyOptimal
+    ? "proven-optimal"
+    : "best-known-upper-bound";
   const summary = Object.freeze({
     clusterCoordinateTime,
     shipProperTime,
@@ -1703,6 +1746,13 @@ function createRoutePlan(
     strategicDwells,
     strategicWaitDuration,
     refinementQuality,
+    refinementScore,
+    globallyOptimal,
+    optimality,
+    earliestArrivalLowerBound,
+    bestKnownUpperBound,
+    lowerBound: earliestArrivalLowerBound,
+    upperBound: bestKnownUpperBound,
     legs,
     timeline,
     uncertainty,
@@ -2349,6 +2399,14 @@ export function planJourney(scenario: CompiledScenario, request: unknown): Route
     );
   }
   const alternatives = Object.freeze(retainedPlans.slice(1));
+  const earliestArrivalLowerBound = bestPlan.earliestArrivalLowerBound;
+  const bestKnownUpperBound = bestPlan.bestKnownUpperBound;
+  const bounds = conservativeBounds(
+    bestKnownUpperBound,
+    earliestArrivalLowerBound,
+    bestPlan.arrivalBounds.upper,
+    bestPlan.timeline.displayPrecision,
+  );
   return Object.freeze({
     ok: true as const,
     outcome: "success" as const,
@@ -2359,6 +2417,11 @@ export function planJourney(scenario: CompiledScenario, request: unknown): Route
     sensitivityAlternatives: sensitivityFor(bestPlan, candidateSummaries),
     refinementQuality,
     search: stats,
+    earliestArrivalLowerBound,
+    bestKnownUpperBound,
+    bounds,
+    globallyOptimal: bestPlan.globallyOptimal,
+    optimality: bestPlan.optimality,
     issues: [] as const,
   });
 }

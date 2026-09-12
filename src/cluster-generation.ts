@@ -7,6 +7,7 @@ import {
   vector3,
   type Meters,
   type PositionVector,
+  type Seconds,
   type VelocityVector,
 } from "./quantities";
 import {
@@ -27,16 +28,21 @@ import {
   type SystemInput,
 } from "./model";
 import {
+  conservativeBounds,
   generatedProvenance,
   provisionalProvenance,
+  type ConservativeBounds,
   type Provenance,
   type PropertyMetadataInput,
 } from "./provenance";
 import {
   planJourney,
   type RoutePlan,
+  type RoutePlanningIssue,
   type RoutePlanningRequest,
+  type RoutePlanningSearchBudget,
   type RoutePlanningResult,
+  type RouteSensitivity,
 } from "./route-planning";
 
 /**
@@ -118,6 +124,201 @@ export type ClusterTopologyStatistics = {
 };
 
 /**
+ * One deterministic node in the logical Cluster hierarchy.
+ *
+ * A node describes a contiguous logical System range. Its child descriptors are cheap metadata;
+ * Systems, Gates, and Gate Connections are not created until a caller asks for materialization.
+ */
+export type ClusterRegionNode = {
+  readonly kind: "cluster-region-node";
+  readonly id: StableId;
+  readonly depth: number;
+  readonly path: readonly number[];
+  readonly logicalSystemStart: number;
+  readonly logicalSystemCount: number;
+  readonly center: PositionVector;
+  readonly radius: Meters;
+  readonly children: readonly ClusterRegionNode[];
+};
+
+/**
+ * A deterministic, lazily materializable description of a logical Cluster population.
+ */
+export type HierarchicalClusterRegion = {
+  readonly kind: "hierarchical-cluster-region";
+  readonly seed: ClusterGenerationSeed;
+  readonly seedLabel: string;
+  readonly seedIdentity: string;
+  readonly seedHash: number;
+  readonly generatorVersion: string;
+  readonly logicalPopulation: number;
+  readonly materializedSystemCount: 0;
+  readonly regionRadius: Meters;
+  readonly root: ClusterRegionNode;
+  readonly leafSystemCapacity: number;
+  readonly maxDepth: number;
+  readonly defaultDepartureGateId: StableId;
+  readonly defaultDestinationGateId: StableId;
+  readonly defaultShipProfileId: StableId;
+  readonly sourceRequest: ClusterGenerationRequest;
+  /** Returns true only for generated Gate identities emitted by a materialization of this hierarchy. */
+  readonly hasMaterializedGate: (gateId: StableId) => boolean;
+  /** Materializes one bounded node or logical index selection without mutating this descriptor. */
+  readonly materialize: (request?: ClusterRegionMaterializationRequest) => GeneratedClusterRegion;
+  /** Alias for `materialize`, retained for callers that prefer an explicit operation name. */
+  readonly materializeRegion: (
+    request?: ClusterRegionMaterializationRequest,
+  ) => GeneratedClusterRegion;
+};
+
+/**
+ * A finite on-demand materialization request for a hierarchical Cluster region.
+ */
+export type ClusterRegionMaterializationRequest = {
+  readonly regionId?: StableId | undefined;
+  readonly materializedSystemCount?: number | undefined;
+  readonly logicalSystemIndices?: readonly number[] | undefined;
+  readonly routeRequest?: Readonly<Record<string, unknown>> | undefined;
+};
+
+/**
+ * A finite refinement budget for a logical Cluster route query.
+ */
+export type ClusterRouteRefinementBudget = {
+  readonly refinementDepth: number;
+  readonly maxMaterializedSystems: number;
+  readonly maxCandidateRoutes: number;
+};
+
+/**
+ * A typed request for bounded hierarchical Cluster route planning.
+ *
+ * The route fields mirror `RoutePlanningRequest`; the optional refinement fields bound logical
+ * candidate generation. Runtime callers may still pass unknown data to receive structured issues.
+ */
+export type ClusterRoutePlanningRequest = Omit<
+  RoutePlanningRequest,
+  "maxAlternatives" | "searchBudget"
+> & {
+  readonly maxAlternatives?: number | undefined;
+  readonly searchBudget?: RoutePlanningSearchBudget | undefined;
+  readonly refinementDepth?: number | undefined;
+  readonly maxMaterializedSystems?: number | undefined;
+  readonly maxCandidateRoutes?: number | undefined;
+};
+
+/**
+ * The quality report for a bounded hierarchical route search.
+ */
+export type ClusterRouteRefinementReport = {
+  readonly kind: "hierarchical-bounded";
+  readonly requestedDepth: number;
+  readonly completedDepth: number;
+  /** Tightness of the reported admissible lower/feasible upper arrival interval (0..1). */
+  readonly score: number;
+  readonly boundGap: Seconds;
+  readonly candidateGraphEdgeCount: number;
+  readonly addedRefinementEdgeCount: number;
+  /** True when a supplemental refinement candidate or its inner search hit a finite bound. */
+  readonly searchExhausted: boolean;
+  readonly globallyOptimal: false;
+  readonly optimality: "best-known-upper-bound";
+  readonly proof: "bounded-candidate-search";
+};
+
+/**
+ * Accounting and reproducibility data for one bounded logical Cluster route query.
+ */
+export type ClusterRoutePlanningSearchStats = {
+  readonly refinementDepth: number;
+  readonly completedRefinementDepth: number;
+  readonly candidateGraphEdgeCount: number;
+  readonly addedRefinementEdgeCount: number;
+  readonly candidateRoutesEvaluated: number;
+  readonly materializedRegionCount: number;
+  readonly materializedSystemCount: number;
+  readonly budget: ClusterRouteRefinementBudget;
+  readonly candidateRouteKeys: readonly string[];
+};
+
+/**
+ * Independently checkable arrival bounds for a bounded logical Cluster route.
+ *
+ * The lower bound is optimistic and admissible; the upper bound is the nominal arrival of a
+ * simulated feasible Route Plan. `conservativeUpperBound` additionally retains input uncertainty.
+ */
+export type ClusterRouteBounds = {
+  readonly earliestArrivalLowerBound: Seconds;
+  readonly bestKnownUpperBound: Seconds;
+  readonly lowerBound: Seconds;
+  readonly upperBound: Seconds;
+  readonly conservativeUpperBound: Seconds;
+  readonly gap: Seconds;
+  readonly lowerBoundMethod: "zero-duration" | "straight-line-light-speed";
+  readonly upperBoundMethod: "simulated-route";
+};
+
+/**
+ * A successful bounded logical Cluster route result.
+ */
+export type ClusterRoutePlanningSuccess = {
+  readonly kind: "cluster-route-planning";
+  readonly ok: true;
+  readonly outcome: "success";
+  readonly plan: RoutePlan;
+  readonly bestPlan: RoutePlan;
+  readonly alternatives: readonly RoutePlan[];
+  readonly sensitivity: readonly RouteSensitivity[];
+  readonly sensitivityAlternatives: readonly RouteSensitivity[];
+  readonly bounds: ConservativeBounds<Seconds>;
+  readonly earliestArrivalLowerBound: Seconds;
+  readonly bestKnownUpperBound: Seconds;
+  readonly lowerBound: Seconds;
+  readonly upperBound: Seconds;
+  readonly conservativeUpperBound: Seconds;
+  readonly refinementQuality: "hierarchical-bounded";
+  /** Tightness of the reported admissible lower/feasible upper arrival interval (0..1). */
+  readonly refinementScore: number;
+  readonly refinement: ClusterRouteRefinementReport;
+  readonly globallyOptimal: false;
+  readonly optimality: "best-known-upper-bound";
+  readonly search: ClusterRoutePlanningSearchStats;
+  readonly issues: readonly [];
+};
+
+/**
+ * An unsuccessful bounded logical Cluster route result.
+ */
+export type ClusterRoutePlanningFailure = {
+  readonly kind: "cluster-route-planning";
+  readonly ok: false;
+  readonly outcome: "invalid" | "disconnected" | "incomplete";
+  readonly plan: undefined;
+  readonly bestPlan: undefined;
+  readonly alternatives: readonly [];
+  readonly sensitivity: readonly [];
+  readonly sensitivityAlternatives: readonly [];
+  readonly bounds: undefined;
+  readonly earliestArrivalLowerBound: undefined;
+  readonly bestKnownUpperBound: undefined;
+  readonly lowerBound: undefined;
+  readonly upperBound: undefined;
+  readonly conservativeUpperBound: undefined;
+  readonly refinementQuality: undefined;
+  readonly refinementScore: undefined;
+  readonly refinement: undefined;
+  readonly globallyOptimal: false;
+  readonly optimality: undefined;
+  readonly search: ClusterRoutePlanningSearchStats | undefined;
+  readonly issues: readonly RoutePlanningIssue[];
+};
+
+/**
+ * The discriminated result returned by the bounded logical Cluster route seam.
+ */
+export type ClusterRoutePlanningResult = ClusterRoutePlanningSuccess | ClusterRoutePlanningFailure;
+
+/**
  * The generated entities and route plan returned by `generateClusterRegion`.
  */
 export type GeneratedClusterRegion = {
@@ -132,6 +333,16 @@ export type GeneratedClusterRegion = {
   readonly population: number;
   readonly materializedSystemCount: number;
   readonly regionRadius: Meters;
+  readonly regionId: StableId;
+  readonly regionDepth: number;
+  readonly logicalSystemStart: number;
+  readonly logicalSystemCount: number;
+  readonly logicalSystemIndices: readonly number[];
+  readonly hierarchy: HierarchicalClusterRegion;
+  readonly materialize: (request?: ClusterRegionMaterializationRequest) => GeneratedClusterRegion;
+  readonly materializeRegion: (
+    request?: ClusterRegionMaterializationRequest,
+  ) => GeneratedClusterRegion;
   readonly scenarioInput: ScenarioInput;
   readonly input: ScenarioInput;
   readonly scenario: CompiledScenario;
@@ -183,6 +394,21 @@ export const DEFAULT_CLUSTER_REGION_RADIUS: Meters = meters(5e17);
  */
 export const DEFAULT_CLUSTER_ROUTE_HORIZON = seconds(1e16);
 
+/** The maximum logical refinement depth accepted by the CPU route reference. */
+export const MAX_CLUSTER_ROUTE_REFINEMENT_DEPTH = 8;
+
+/** The default number of Systems a bounded logical route may materialize per candidate. */
+export const DEFAULT_CLUSTER_ROUTE_MATERIALIZED_SYSTEMS = 256;
+
+/** The largest finite candidate set accepted by one logical route query. */
+export const MAX_CLUSTER_ROUTE_CANDIDATES = 64;
+
+/** The maximum logical Systems described by one leaf hierarchy node. */
+export const CLUSTER_REGION_LEAF_SYSTEM_CAPACITY = 4_096;
+
+/** The fixed branching factor used by deterministic hierarchy construction. */
+export const CLUSTER_REGION_BRANCHING_FACTOR = 8;
+
 const GRAVITATIONAL_PROFILE_OUTER_SCALE = 0.2;
 const SHORTCUT_MINIMUM_SYSTEM_COUNT = 16;
 const SHORTCUTS_PER_SYSTEMS = 128;
@@ -229,6 +455,8 @@ type GeneratedEdge = {
   readonly b: number;
   readonly distance: number;
   readonly kind: Exclude<GeneratedConnectionKind, "attachment">;
+  /** A stable endpoint-derived token used by on-demand materialization. */
+  readonly identity?: string | undefined;
 };
 
 type GeneratedRecords = {
@@ -612,16 +840,20 @@ function generatedAnchorId(context: GeneratorContext, index: number): StableId {
   return `anchor:generated:${context.versionToken}:${context.seedToken}:${String(index).padStart(4, "0")}` as StableId;
 }
 
-function generatedGateId(
-  context: GeneratorContext,
-  edgeIndex: number,
-  endpoint: "a" | "b",
-): StableId {
-  return `gate:generated:${context.versionToken}:${context.seedToken}:${String(edgeIndex).padStart(4, "0")}:${endpoint}` as StableId;
+function edgeIdentityToken(edgeIndex: number | string): string {
+  return typeof edgeIndex === "number" ? String(edgeIndex).padStart(4, "0") : edgeIndex;
 }
 
-function generatedConnectionId(context: GeneratorContext, edgeIndex: number): StableId {
-  return `connection:generated:${context.versionToken}:${context.seedToken}:${String(edgeIndex).padStart(4, "0")}` as StableId;
+function generatedGateId(
+  context: GeneratorContext,
+  edgeIndex: number | string,
+  endpoint: "a" | "b",
+): StableId {
+  return `gate:generated:${context.versionToken}:${context.seedToken}:${edgeIdentityToken(edgeIndex)}:${endpoint}` as StableId;
+}
+
+function generatedConnectionId(context: GeneratorContext, edgeIndex: number | string): StableId {
+  return `connection:generated:${context.versionToken}:${context.seedToken}:${edgeIdentityToken(edgeIndex)}` as StableId;
 }
 
 function attachmentToken(context: GeneratorContext, index: number, sourceGateId: string): string {
@@ -1194,7 +1426,7 @@ function buildShortcuts(
 
 function gateOffset(
   context: GeneratorContext,
-  edgeIndex: number,
+  edgeIndex: number | string,
   endpoint: "a" | "b",
 ): readonly [number, number, number] {
   const radius =
@@ -1219,11 +1451,16 @@ function gateOffset(
   return [radius * sine * Math.cos(azimuth), radius * sine * Math.sin(azimuth), radius * cosine];
 }
 
+function edgeToken(edge: GeneratedEdge, edgeIndex: number): number | string {
+  return edge.identity ?? edgeIndex;
+}
+
 function createGeneratedRecords(
   context: GeneratorContext,
   points: readonly GeneratedPoint[],
   edges: readonly GeneratedEdge[],
 ): GeneratedRecords {
+  const pointByIndex = new Map(points.map((point) => [point.index, point]));
   const systems: ScenarioEntity[] = [];
   const orbitalAnchors: ScenarioEntity[] = [];
   for (const point of points) {
@@ -1308,19 +1545,20 @@ function createGeneratedRecords(
   const routeEdgeIndex = sortedEdges.indexOf(routeEdge);
   const routeDepartureGateId = generatedGateId(
     context,
-    routeEdgeIndex,
+    edgeToken(routeEdge, routeEdgeIndex),
     routeEdge.a === routeLeaf.index ? "a" : "b",
   );
   const routeDestinationGateId = generatedGateId(
     context,
-    routeEdgeIndex,
+    edgeToken(routeEdge, routeEdgeIndex),
     routeEdge.a === routeLeaf.index ? "b" : "a",
   );
 
   for (const [edgeIndex, edge] of sortedEdges.entries()) {
-    const gateAId = generatedGateId(context, edgeIndex, "a");
-    const gateBId = generatedGateId(context, edgeIndex, "b");
-    const connectionId = generatedConnectionId(context, edgeIndex);
+    const edgeTokenValue = edgeToken(edge, edgeIndex);
+    const gateAId = generatedGateId(context, edgeTokenValue, "a");
+    const gateBId = generatedGateId(context, edgeTokenValue, "b");
+    const connectionId = generatedConnectionId(context, edgeTokenValue);
     const connectionDesignation = `LNK-${context.seedToken}-${String(edgeIndex).padStart(4, "0")}`;
     const connectionName = `Generated ${edge.kind} Link ${connectionDesignation}`;
     const endpoints: readonly ["a" | "b", number, StableId][] = [
@@ -1328,7 +1566,7 @@ function createGeneratedRecords(
       ["b", edge.b, gateBId],
     ];
     for (const [endpoint, pointIndex, gateId] of endpoints) {
-      const point = points[pointIndex];
+      const point = pointByIndex.get(pointIndex);
       if (point === undefined) {
         throw new RangeError("Generated topology referenced an unknown System point.");
       }
@@ -1351,7 +1589,7 @@ function createGeneratedRecords(
         orbitalAnchorId: generatedAnchorId(context, pointIndex),
         positionAtEpoch: positionWithOffset(
           point.position,
-          gateOffset(context, edgeIndex, endpoint),
+          gateOffset(context, edgeTokenValue, endpoint),
         ),
         velocityAtEpoch: ZERO_VELOCITY,
         orbitalElements: undefined,
@@ -1693,14 +1931,16 @@ function buildStatistics(
 }
 
 function generatedTopologyIsConnected(
-  systemIds: readonly StableId[],
+  points: readonly GeneratedPoint[],
   edges: readonly GeneratedEdge[],
 ): boolean {
-  if (systemIds.length === 0) {
+  const first = points[0];
+  if (first === undefined) {
     return false;
   }
-  const visited = new Set<number>([0]);
-  const pending = [0];
+  const expected = new Set(points.map((point) => point.index));
+  const visited = new Set<number>([first.index]);
+  const pending = [first.index];
   while (pending.length > 0) {
     const current = pending.shift();
     if (current === undefined) {
@@ -1708,13 +1948,13 @@ function generatedTopologyIsConnected(
     }
     for (const edge of edges) {
       const next = edge.a === current ? edge.b : edge.b === current ? edge.a : undefined;
-      if (next !== undefined && !visited.has(next)) {
+      if (next !== undefined && expected.has(next) && !visited.has(next)) {
         visited.add(next);
         pending.push(next);
       }
     }
   }
-  return visited.size === systemIds.length;
+  return visited.size === expected.size;
 }
 
 function buildTopology(
@@ -1762,10 +2002,7 @@ function buildTopology(
     localDistanceThreshold,
     localLinkFraction: localCount / Math.max(1, connectionCount),
     shortcutLinkFraction: records.shortcutConnectionIds.length / Math.max(1, connectionCount),
-    isConnected: generatedTopologyIsConnected(
-      points.map((point) => point.id),
-      edges,
-    ),
+    isConnected: generatedTopologyIsConnected(points, edges),
     backboneConnectionIds: records.backboneConnectionIds,
     shortcutConnectionIds: records.shortcutConnectionIds,
     attachmentConnectionIds,
@@ -1799,7 +2036,7 @@ function scenarioInputForRegion(
   request: ClusterGenerationRequest,
   context: GeneratorContext,
   base: NormalizedBase,
-  records: GeneratedRecords,
+  records: GeneratedRecords | undefined,
   statistics: ClusterGenerationStatistics,
 ): ScenarioInput {
   const baseScenarioId = stableIdentifier(base.id)
@@ -1819,12 +2056,10 @@ function scenarioInputForRegion(
     base.canonicalIdentity ??
     Object.freeze({ id, designation, name, provenance: context.generatedProvenance });
   const properties = scenarioProperties(base, context, statistics);
-  const generatedEntities = [
-    ...records.systems,
-    ...records.orbitalAnchors,
-    ...records.gates,
-    ...records.connections,
-  ];
+  const generatedEntities =
+    records === undefined
+      ? []
+      : [...records.systems, ...records.orbitalAnchors, ...records.gates, ...records.connections];
   const scenario: ScenarioInput = {
     id,
     designation,
@@ -1832,18 +2067,18 @@ function scenarioInputForRegion(
     epoch,
     systems: freezeRecords([
       ...base.systems,
-      ...generatedEntities.filter((entity) =>
-        records.generatedSystemIds.includes(entity.id as StableId),
+      ...generatedEntities.filter(
+        (entity) => records?.generatedSystemIds.includes(entity.id as StableId) === true,
       ),
     ]) as readonly SystemInput[],
     orbitalAnchors: freezeRecords([
       ...base.orbitalAnchors,
-      ...records.orbitalAnchors,
+      ...(records?.orbitalAnchors ?? []),
     ]) as readonly OrbitalAnchorInput[],
-    gates: freezeRecords([...base.gates, ...records.gates]) as readonly GateInput[],
+    gates: freezeRecords([...base.gates, ...(records?.gates ?? [])]) as readonly GateInput[],
     gateConnections: freezeRecords([
       ...base.connections,
-      ...records.connections,
+      ...(records?.connections ?? []),
     ]) as readonly GateConnectionInput[],
     shipProfiles: freezeRecords(
       base.shipProfiles.length > 0
@@ -1860,6 +2095,52 @@ function scenarioInputForRegion(
     propertyProvenance: properties as ScenarioInput["propertyProvenance"],
   };
   return Object.freeze(scenario);
+}
+
+function canonicalGateIdsForHierarchy(
+  hierarchy: HierarchicalClusterRegion,
+  context: GeneratorContext,
+): ReadonlySet<StableId> {
+  const source = hierarchy.sourceRequest.canonicalScenario ?? hierarchy.sourceRequest.baseScenario;
+  if (source === undefined) {
+    return new Set<StableId>();
+  }
+  const base = normalizeBaseScenario(source, context);
+  return new Set(
+    base.gates.flatMap((gate) => (stableIdentifier(gate.id) ? [gate.id as StableId] : [])),
+  );
+}
+
+function scenarioForCanonicalCandidate(
+  hierarchy: HierarchicalClusterRegion,
+  routeRequest: Readonly<Record<string, unknown>>,
+  context: GeneratorContext,
+): CompiledScenario | undefined {
+  const canonicalContext = Object.freeze({ ...context, materializedSystemCount: 0 });
+  const source = hierarchy.sourceRequest.canonicalScenario ?? hierarchy.sourceRequest.baseScenario;
+  if (source === undefined) {
+    return undefined;
+  }
+  const base = normalizeBaseScenario(source, canonicalContext);
+  const request: ClusterGenerationRequest = {
+    ...hierarchy.sourceRequest,
+    logicalPopulation: hierarchy.logicalPopulation,
+    materializedSystemCount: 0,
+    seed: hierarchy.seed,
+    generatorVersion: hierarchy.generatorVersion,
+    regionRadius: hierarchy.regionRadius,
+    routeRequest,
+  };
+  const statistics = buildStatistics(canonicalContext, Object.freeze([]));
+  const scenarioInput = scenarioInputForRegion(
+    request,
+    canonicalContext,
+    base,
+    undefined,
+    statistics,
+  );
+  const compiled = compileScenario(scenarioInput);
+  return compiled.ok ? compiled.scenario : undefined;
 }
 
 function routeRequestForRegion(
@@ -1917,29 +2198,453 @@ function routeRequestForRegion(
   });
 }
 
-/**
- * Generates, compiles, and immediately routes a finite deterministic Cluster region.
- *
- * Generated content is marked with `generated` Provenance whose source includes the generator
- * version and seed. The CPU reference implementation materializes only the requested finite
- * sample, uses a truncated Plummer radial profile, creates a nearest-neighbour connectivity
- * backbone, and adds a small deterministic set of long-distance shortcuts. The resulting Scenario
- * is compiled through the normal model seam and the default endpoints are planned through the
- * normal explicit earliest-arrival route planner; no routing implementation is duplicated here.
- *
- * @param request - Logical population, seed, generator version, and optional canonical base data.
- * @returns A frozen generated region containing its compiled Scenario, audit statistics, and route.
- * @throws RangeError when the finite generation request is invalid or its default route cannot be
- * planned.
- */
-export function generateClusterRegion(request: ClusterGenerationRequest): GeneratedClusterRegion {
-  const context = buildContext(request);
-  const baseValue = request.canonicalScenario ?? request.baseScenario;
-  const base = normalizeBaseScenario(baseValue, context);
-  const points = createPoints(context);
-  const backbone = buildBackbone(points);
-  const shortcuts = buildShortcuts(context, points, backbone);
-  const edges = Object.freeze([...backbone, ...shortcuts]);
+type LogicalGateReference = {
+  readonly a: number;
+  readonly b: number;
+  readonly endpoint: "a" | "b";
+  readonly edgeIdentity: string;
+  readonly systemIndex: number;
+  readonly otherSystemIndex: number;
+};
+
+type ParsedHierarchicalRouteRequest = {
+  readonly routeRequest: Readonly<Record<string, unknown>>;
+  readonly departureGateId: StableId;
+  readonly destinationGateId: StableId;
+  readonly refinementBudget: ClusterRouteRefinementBudget;
+  readonly issues: readonly RoutePlanningIssue[];
+};
+
+function regionNodeId(context: GeneratorContext, path: readonly number[]): StableId {
+  const pathToken = path.length === 0 ? "root" : path.join(".");
+  return `region:generated:${context.versionToken}:${context.seedToken}:${pathToken}` as StableId;
+}
+
+function createRegionNode(
+  context: GeneratorContext,
+  logicalSystemStart: number,
+  logicalSystemCount: number,
+  depth: number,
+  path: readonly number[],
+): ClusterRegionNode {
+  const childCount =
+    logicalSystemCount > CLUSTER_REGION_LEAF_SYSTEM_CAPACITY
+      ? Math.min(
+          CLUSTER_REGION_BRANCHING_FACTOR,
+          Math.ceil(logicalSystemCount / CLUSTER_REGION_LEAF_SYSTEM_CAPACITY),
+        )
+      : 0;
+  const children: ClusterRegionNode[] = [];
+  if (childCount > 0) {
+    const baseChildCount = Math.floor(logicalSystemCount / childCount);
+    const remainder = logicalSystemCount % childCount;
+    let nextStart = logicalSystemStart;
+    for (let childIndex = 0; childIndex < childCount; childIndex += 1) {
+      const childLogicalCount = baseChildCount + (childIndex < remainder ? 1 : 0);
+      const childPath = [...path, childIndex];
+      children.push(createRegionNode(context, nextStart, childLogicalCount, depth + 1, childPath));
+      nextStart += childLogicalCount;
+    }
+  }
+  const center = generatedPosition(
+    context,
+    `region-center:${logicalSystemStart}:${logicalSystemCount}:${path.join(".")}`,
+  );
+  return Object.freeze({
+    kind: "cluster-region-node" as const,
+    id: regionNodeId(context, path),
+    depth,
+    path: Object.freeze([...path]),
+    logicalSystemStart,
+    logicalSystemCount,
+    center,
+    // A full-radius enclosing bound is conservative even before child contents are materialized.
+    radius: context.regionRadius,
+    children: Object.freeze(children),
+  });
+}
+
+function hierarchyDepth(node: ClusterRegionNode): number {
+  return node.children.length === 0
+    ? node.depth
+    : Math.max(...node.children.map((child) => hierarchyDepth(child)));
+}
+
+function logicalParentIndex(index: number): number | undefined {
+  return index <= 0 ? undefined : Math.floor((index - 1) / 2);
+}
+
+function logicalEdgeIdentity(a: number, b: number): string {
+  return `h-${Math.min(a, b)}-${Math.max(a, b)}`;
+}
+
+function logicalGateId(
+  context: GeneratorContext,
+  a: number,
+  b: number,
+  endpoint: "a" | "b",
+): StableId {
+  return generatedGateId(context, logicalEdgeIdentity(a, b), endpoint);
+}
+
+function logicalGateReference(
+  context: GeneratorContext,
+  gateId: StableId,
+  hasMaterializedGate: ((gateId: StableId) => boolean) | undefined,
+): LogicalGateReference | undefined {
+  const prefix = `gate:generated:${context.versionToken}:${context.seedToken}:`;
+  if (!gateId.startsWith(prefix)) {
+    return undefined;
+  }
+  const suffix = gateId.slice(prefix.length);
+  const separator = suffix.lastIndexOf(":");
+  if (separator < 0) {
+    return undefined;
+  }
+  const edgeIdentity = suffix.slice(0, separator);
+  const endpoint = suffix.slice(separator + 1);
+  if (endpoint !== "a" && endpoint !== "b") {
+    return undefined;
+  }
+  const edgeMatch = /^(h|region)-(\d+)-(\d+)$/.exec(edgeIdentity);
+  if (edgeMatch === null) {
+    return undefined;
+  }
+  const edgeKind = edgeMatch[1];
+  const a = Number(edgeMatch[2]);
+  const b = Number(edgeMatch[3]);
+  if (
+    (edgeKind !== "h" && edgeKind !== "region") ||
+    !Number.isSafeInteger(a) ||
+    !Number.isSafeInteger(b) ||
+    a < 0 ||
+    b <= a ||
+    a === b ||
+    b >= context.logicalPopulation ||
+    (edgeKind === "h" && logicalParentIndex(b) !== a) ||
+    (edgeKind === "region" && (hasMaterializedGate === undefined || !hasMaterializedGate(gateId)))
+  ) {
+    return undefined;
+  }
+  return {
+    a,
+    b,
+    endpoint,
+    edgeIdentity,
+    systemIndex: endpoint === "a" ? a : b,
+    otherSystemIndex: endpoint === "a" ? b : a,
+  };
+}
+
+function logicalEdge(a: number, b: number, context: GeneratorContext): GeneratedEdge {
+  const left = Math.min(a, b);
+  const right = Math.max(a, b);
+  const leftPosition = generatedPosition(context, `generated-system:${left}`);
+  const rightPosition = generatedPosition(context, `generated-system:${right}`);
+  return {
+    a: left,
+    b: right,
+    distance: positionDistance(leftPosition, rightPosition),
+    kind: "backbone",
+    identity: logicalEdgeIdentity(left, right),
+  };
+}
+
+function logicalTreePath(
+  start: number,
+  destination: number,
+  context: GeneratorContext,
+): readonly GeneratedEdge[] {
+  const startAncestors = new Map<number, number | undefined>();
+  let current: number | undefined = start;
+  while (current !== undefined) {
+    startAncestors.set(current, logicalParentIndex(current));
+    current = logicalParentIndex(current);
+  }
+  const destinationEdges: GeneratedEdge[] = [];
+  current = destination;
+  while (current !== undefined && !startAncestors.has(current)) {
+    const parent = logicalParentIndex(current);
+    if (parent === undefined) {
+      break;
+    }
+    destinationEdges.push(logicalEdge(current, parent, context));
+    current = parent;
+  }
+  if (current === undefined) {
+    return Object.freeze(destinationEdges);
+  }
+  const common = current;
+  const startEdges: GeneratedEdge[] = [];
+  current = start;
+  while (current !== common) {
+    const parent = logicalParentIndex(current);
+    if (parent === undefined) {
+      break;
+    }
+    startEdges.push(logicalEdge(current, parent, context));
+    current = parent;
+  }
+  return Object.freeze([...startEdges, ...destinationEdges.reverse()]);
+}
+
+function logicalShortcutAllowed(context: GeneratorContext, a: number, b: number): boolean {
+  const hash = hashParts(
+    context.seedIdentity,
+    context.generatorVersion,
+    "hierarchical-shortcut",
+    a,
+    b,
+  );
+  return hash % 32 === 0;
+}
+
+function logicalShortcutEdge(
+  context: GeneratorContext,
+  start: number,
+  destination: number,
+  level: number,
+): GeneratedEdge | undefined {
+  const a = Math.min(start, destination);
+  const b = Math.max(start, destination);
+  if (a === b || !logicalShortcutAllowed(context, a, b)) {
+    return undefined;
+  }
+  const block = 2 ** Math.min(level + 1, 20);
+  if (Math.floor(a / block) === Math.floor(b / block)) {
+    return undefined;
+  }
+  const edge = logicalEdge(a, b, context);
+  return { ...edge, kind: "shortcut", identity: `shortcut-${a}-${b}` };
+}
+
+function materializedLogicalIndices(
+  node: ClusterRegionNode,
+  requestedCount: number | undefined,
+  requestedIndices: readonly number[] | undefined,
+): readonly number[] {
+  if (requestedIndices !== undefined) {
+    if (
+      requestedIndices.length < 2 ||
+      requestedIndices.length > MAX_CLUSTER_MATERIALIZED_SYSTEM_COUNT
+    ) {
+      throw new RangeError(
+        `logicalSystemIndices must contain between 2 and ${MAX_CLUSTER_MATERIALIZED_SYSTEM_COUNT} Systems.`,
+      );
+    }
+    const unique = new Set<number>();
+    for (const index of requestedIndices) {
+      if (
+        !Number.isSafeInteger(index) ||
+        index < node.logicalSystemStart ||
+        index >= node.logicalSystemStart + node.logicalSystemCount
+      ) {
+        throw new RangeError(
+          `logicalSystemIndices must refer to Systems inside region ${node.id}.`,
+        );
+      }
+      if (unique.has(index)) {
+        throw new RangeError("logicalSystemIndices must not contain duplicates.");
+      }
+      unique.add(index);
+    }
+    return Object.freeze([...unique].sort((left, right) => left - right));
+  }
+  const count =
+    requestedCount ?? Math.min(node.logicalSystemCount, DEFAULT_CLUSTER_MATERIALIZED_SYSTEM_COUNT);
+  if (
+    !Number.isSafeInteger(count) ||
+    count < 2 ||
+    count > MAX_CLUSTER_MATERIALIZED_SYSTEM_COUNT ||
+    count > node.logicalSystemCount
+  ) {
+    throw new RangeError(
+      `materializedSystemCount must be an integer from 2 through ${Math.min(MAX_CLUSTER_MATERIALIZED_SYSTEM_COUNT, node.logicalSystemCount)} for region ${node.id}.`,
+    );
+  }
+  if (count === node.logicalSystemCount) {
+    return Object.freeze(
+      Array.from({ length: count }, (_, offset) => node.logicalSystemStart + offset),
+    );
+  }
+  return Object.freeze(
+    Array.from(
+      { length: count },
+      (_, offset) =>
+        node.logicalSystemStart + Math.floor((offset * node.logicalSystemCount) / count),
+    ),
+  );
+}
+
+function regionNodeForId(root: ClusterRegionNode, id: StableId): ClusterRegionNode | undefined {
+  if (root.id === id) {
+    return root;
+  }
+  for (const child of root.children) {
+    const match = regionNodeForId(child, id);
+    if (match !== undefined) {
+      return match;
+    }
+  }
+  return undefined;
+}
+
+function buildOnDemandRegionEdges(
+  context: GeneratorContext,
+  points: readonly GeneratedPoint[],
+): readonly GeneratedEdge[] {
+  const sorted = [...points].sort((left, right) => left.index - right.index);
+  const selected = new Set(sorted.map((point) => point.index));
+  const edges = new Map<string, GeneratedEdge>();
+  const add = (a: number, b: number, kind: GeneratedEdge["kind"], identity: string): void => {
+    if (a === b || !selected.has(a) || !selected.has(b)) {
+      return;
+    }
+    const key = `${Math.min(a, b)}:${Math.max(a, b)}`;
+    if (!edges.has(key)) {
+      const base = logicalEdge(a, b, context);
+      edges.set(key, { ...base, kind, identity });
+    }
+  };
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1];
+    const current = sorted[index];
+    if (previous !== undefined && current !== undefined) {
+      add(previous.index, current.index, "backbone", `region-${previous.index}-${current.index}`);
+    }
+  }
+  for (const point of sorted) {
+    const parent = logicalParentIndex(point.index);
+    if (parent !== undefined) {
+      add(point.index, parent, "backbone", logicalEdgeIdentity(point.index, parent));
+    }
+  }
+  return Object.freeze(
+    [...edges.values()].sort((left, right) => {
+      const tokenLeft = left.identity ?? "";
+      const tokenRight = right.identity ?? "";
+      return tokenLeft.localeCompare(tokenRight);
+    }),
+  );
+}
+
+function createHierarchicalRegion(
+  request: ClusterGenerationRequest,
+  context: GeneratorContext,
+): HierarchicalClusterRegion {
+  const root = createRegionNode(context, 0, context.logicalPopulation, 0, []);
+  const lastIndex = context.logicalPopulation - 1;
+  const lastParent = logicalParentIndex(lastIndex) ?? 0;
+  const defaultDepartureGateId = logicalGateId(context, 0, 1, "a");
+  const defaultDestinationGateId = logicalGateId(context, lastParent, lastIndex, "b");
+  const base = normalizeBaseScenario(request.canonicalScenario ?? request.baseScenario, context);
+  const defaultShipProfileId = (base.shipProfiles[0]?.id ??
+    request.shipProfiles?.[0]?.id ??
+    "ship:generated-survey") as StableId;
+  const sourceRequest = Object.freeze({
+    ...request,
+    shipProfiles:
+      request.shipProfiles === undefined ? undefined : Object.freeze([...request.shipProfiles]),
+  });
+  const materializedGateIds = new Set<StableId>();
+  const hasMaterializedGate = (gateId: StableId): boolean => materializedGateIds.has(gateId);
+  function materialize(
+    materializationRequest?: ClusterRegionMaterializationRequest,
+  ): GeneratedClusterRegion {
+    const generated = materializeHierarchicalRegion(
+      context,
+      sourceRequest,
+      hierarchy,
+      materializationRequest,
+    );
+    for (const gateId of generated.generatedGateIds) {
+      materializedGateIds.add(gateId);
+    }
+    return generated;
+  }
+  const hierarchy: HierarchicalClusterRegion = Object.freeze({
+    kind: "hierarchical-cluster-region" as const,
+    seed: context.seed,
+    seedLabel: context.seedLabel,
+    seedIdentity: context.seedIdentity,
+    seedHash: context.seedHash,
+    generatorVersion: context.generatorVersion,
+    logicalPopulation: context.logicalPopulation,
+    materializedSystemCount: 0 as const,
+    regionRadius: context.regionRadius,
+    root,
+    leafSystemCapacity: CLUSTER_REGION_LEAF_SYSTEM_CAPACITY,
+    maxDepth: hierarchyDepth(root),
+    defaultDepartureGateId,
+    defaultDestinationGateId,
+    defaultShipProfileId,
+    sourceRequest,
+    hasMaterializedGate,
+    materialize,
+    materializeRegion: materialize,
+  });
+  return hierarchy;
+}
+
+function materializeHierarchicalRegion(
+  context: GeneratorContext,
+  sourceRequest: ClusterGenerationRequest,
+  hierarchy: HierarchicalClusterRegion,
+  materializationRequest: ClusterRegionMaterializationRequest | undefined,
+): GeneratedClusterRegion {
+  const requestedRegionId = materializationRequest?.regionId ?? hierarchy.root.id;
+  const node = regionNodeForId(hierarchy.root, requestedRegionId);
+  if (node === undefined) {
+    throw new RangeError(`Unknown Cluster region node ${requestedRegionId}.`);
+  }
+  const indices = materializedLogicalIndices(
+    node,
+    materializationRequest?.materializedSystemCount,
+    materializationRequest?.logicalSystemIndices,
+  );
+  const materializedContext = Object.freeze({
+    ...context,
+    materializedSystemCount: indices.length,
+  });
+  const points = Object.freeze(
+    indices.map((index) => ({
+      index,
+      id: generatedSystemId(materializedContext, index),
+      position: generatedPosition(materializedContext, `generated-system:${index}`),
+    })),
+  );
+  const edges = buildOnDemandRegionEdges(materializedContext, points);
+  const request: ClusterGenerationRequest = Object.freeze({
+    ...sourceRequest,
+    materializedSystemCount: indices.length,
+    routeRequest: materializationRequest?.routeRequest ?? sourceRequest.routeRequest,
+  });
+  const base = normalizeBaseScenario(
+    request.canonicalScenario ?? request.baseScenario,
+    materializedContext,
+  );
+  return buildGeneratedRegionResult(
+    materializedContext,
+    request,
+    base,
+    hierarchy,
+    node,
+    indices,
+    points,
+    edges,
+  );
+}
+
+function buildGeneratedRegionResult(
+  context: GeneratorContext,
+  request: ClusterGenerationRequest,
+  base: NormalizedBase,
+  hierarchy: HierarchicalClusterRegion,
+  node: ClusterRegionNode,
+  logicalSystemIndices: readonly number[],
+  points: readonly GeneratedPoint[],
+  edges: readonly GeneratedEdge[],
+): GeneratedClusterRegion {
   let records = createGeneratedRecords(context, points, edges);
   records = attachUnpairedCanonicalGates(context, records, base.gates, base.connections);
   assertGeneratedIdCollisions(
@@ -1959,7 +2664,7 @@ export function generateClusterRegion(request: ClusterGenerationRequest): Genera
   const scenario = compiledResult.scenario;
   const routeRequest = routeRequestForRegion(request, context, scenario, records);
   const route = planJourney(scenario, routeRequest);
-  if (!route.ok && !isRecord(request.routeRequest)) {
+  if (!route.ok && request.routeRequest === undefined) {
     throw new RangeError(
       `Generated Cluster default route failed: ${route.issues.map((issue) => issue.message).join(" ")}`,
     );
@@ -1976,7 +2681,7 @@ export function generateClusterRegion(request: ClusterGenerationRequest): Genera
   const generatedConnections = scenario.gateConnections.filter((entity) =>
     records.generatedConnectionIds.includes(entity.id),
   );
-  const region = Object.freeze({
+  return Object.freeze({
     kind: "generated-cluster-region" as const,
     ok: true as const,
     seed: context.seed,
@@ -1988,6 +2693,12 @@ export function generateClusterRegion(request: ClusterGenerationRequest): Genera
     population: context.logicalPopulation,
     materializedSystemCount: context.materializedSystemCount,
     regionRadius: context.regionRadius,
+    regionId: node.id,
+    regionDepth: node.depth,
+    logicalSystemStart: node.logicalSystemStart,
+    logicalSystemCount: node.logicalSystemCount,
+    logicalSystemIndices: Object.freeze([...logicalSystemIndices]),
+    hierarchy,
     scenarioInput,
     input: scenarioInput,
     scenario,
@@ -2012,8 +2723,1011 @@ export function generateClusterRegion(request: ClusterGenerationRequest): Genera
     routePlan: route.ok ? route.plan : undefined,
     journeyTimeline: route.ok ? route.plan.timeline : undefined,
     timeline: route.ok ? route.plan.timeline : undefined,
+    materialize: hierarchy.materialize,
+    materializeRegion: hierarchy.materialize,
   });
-  return region;
+}
+
+/**
+ * Creates a deterministic hierarchical Cluster descriptor without materializing its logical
+ * Systems, Gates, or Gate Connections.
+ *
+ * @param request - Logical population, seed, generator version, and optional canonical base data.
+ * @returns A frozen hierarchy whose finite nodes can be materialized on demand.
+ */
+export function generateHierarchicalCluster(
+  request: ClusterGenerationRequest,
+): HierarchicalClusterRegion {
+  const context = buildContext(request);
+  return createHierarchicalRegion(request, context);
+}
+
+/**
+ * Alias for {@link generateHierarchicalCluster} using region terminology.
+ *
+ * @param request - Logical population, seed, generator version, and optional canonical base data.
+ * @returns A deterministic lazily materializable Cluster hierarchy.
+ */
+export const createHierarchicalCluster = generateHierarchicalCluster;
+
+/**
+ * Materializes one finite node or logical System selection from a hierarchical Cluster.
+ *
+ * @param region - A hierarchical descriptor or a previously materialized generated region.
+ * @param request - Optional node, logical index, and finite materialization selection.
+ * @returns A compiled finite region generated from the same stable seed and version.
+ * @throws RangeError when the node or finite selection is invalid.
+ */
+export function materializeClusterRegion(
+  region: HierarchicalClusterRegion | GeneratedClusterRegion,
+  request?: ClusterRegionMaterializationRequest,
+): GeneratedClusterRegion {
+  return "hierarchy" in region
+    ? region.hierarchy.materialize(request)
+    : region.materialize(request);
+}
+
+function addClusterRouteIssue(
+  issues: RoutePlanningIssue[],
+  code: RoutePlanningIssue["code"],
+  path: string,
+  message: string,
+  entityType: RoutePlanningIssue["entityType"] = undefined,
+  entityId: StableId | undefined = undefined,
+  relatedId: StableId | undefined = undefined,
+): void {
+  issues.push(
+    Object.freeze({
+      code,
+      path,
+      message,
+      entityType,
+      entityId,
+      relatedId,
+      causeCode: undefined,
+    }),
+  );
+}
+
+function readClusterRouteBudget(
+  request: RecordValue,
+  issues: RoutePlanningIssue[],
+): ClusterRouteRefinementBudget | undefined {
+  const rawBudget = isRecord(request.refinementBudget)
+    ? request.refinementBudget
+    : isRecord(request.refinement)
+      ? request.refinement
+      : request;
+  const readInteger = (
+    keys: readonly string[],
+    defaultValue: number,
+    minimum: number,
+    maximum: number,
+  ): number => {
+    let value: unknown;
+    for (const key of keys) {
+      if (hasOwn(rawBudget, key)) {
+        value = rawBudget[key];
+        break;
+      }
+    }
+    if (value === undefined && rawBudget !== request) {
+      for (const key of keys) {
+        if (hasOwn(request, key)) {
+          value = request[key];
+          break;
+        }
+      }
+    }
+    if (value === undefined) {
+      return defaultValue;
+    }
+    if (
+      typeof value !== "number" ||
+      !Number.isSafeInteger(value) ||
+      value < minimum ||
+      value > maximum
+    ) {
+      addClusterRouteIssue(
+        issues,
+        "invalid-request",
+        `request.${keys[0] ?? "refinement"}`,
+        `request.${keys[0] ?? "refinement"} must be an integer from ${minimum} through ${maximum}.`,
+      );
+      return defaultValue;
+    }
+    return value;
+  };
+  const refinementDepth = readInteger(
+    ["refinementDepth", "depth", "refinementLevel"],
+    0,
+    0,
+    MAX_CLUSTER_ROUTE_REFINEMENT_DEPTH,
+  );
+  const maxMaterializedSystems = readInteger(
+    ["maxMaterializedSystems", "materializedSystemBudget"],
+    DEFAULT_CLUSTER_ROUTE_MATERIALIZED_SYSTEMS,
+    2,
+    MAX_CLUSTER_MATERIALIZED_SYSTEM_COUNT,
+  );
+  const maxCandidateRoutes = readInteger(
+    ["maxCandidateRoutes", "candidateBudget"],
+    Math.min(MAX_CLUSTER_ROUTE_CANDIDATES, refinementDepth + 1),
+    1,
+    MAX_CLUSTER_ROUTE_CANDIDATES,
+  );
+  if (issues.length > 0) {
+    return undefined;
+  }
+  return Object.freeze({ refinementDepth, maxMaterializedSystems, maxCandidateRoutes });
+}
+
+function parseClusterRouteRequest(
+  request: unknown,
+  hierarchy: HierarchicalClusterRegion,
+): ParsedHierarchicalRouteRequest | undefined {
+  const issues: RoutePlanningIssue[] = [];
+  if (!isRecord(request)) {
+    addClusterRouteIssue(
+      issues,
+      "invalid-request",
+      "request",
+      "Cluster route request must be an object.",
+    );
+    return Object.freeze({
+      routeRequest: {},
+      departureGateId: hierarchy.defaultDepartureGateId,
+      destinationGateId: hierarchy.defaultDestinationGateId,
+      refinementBudget: Object.freeze({
+        refinementDepth: 0,
+        maxMaterializedSystems: DEFAULT_CLUSTER_ROUTE_MATERIALIZED_SYSTEMS,
+        maxCandidateRoutes: 1,
+      }),
+      issues: Object.freeze(issues),
+    });
+  }
+  const routeRequest = isRecord(request.routeRequest)
+    ? request.routeRequest
+    : isRecord(request.request) && !hasOwn(request, "departureGateId")
+      ? request.request
+      : request;
+  const departureGateId = routeRequest.departureGateId;
+  const destinationGateId = routeRequest.destinationGateId;
+  if (typeof departureGateId !== "string" || typeof destinationGateId !== "string") {
+    addClusterRouteIssue(
+      issues,
+      "invalid-request",
+      "request.departureGateId",
+      "Cluster route requests must select exact departureGateId and destinationGateId values.",
+    );
+  }
+  const refinementBudget = readClusterRouteBudget(request, issues);
+  const budget =
+    refinementBudget ??
+    Object.freeze({
+      refinementDepth: 0,
+      maxMaterializedSystems: DEFAULT_CLUSTER_ROUTE_MATERIALIZED_SYSTEMS,
+      maxCandidateRoutes: 1,
+    });
+  const context = buildContext({
+    logicalPopulation: hierarchy.logicalPopulation,
+    materializedSystemCount: Math.min(hierarchy.logicalPopulation, budget.maxMaterializedSystems),
+    seed: hierarchy.seed,
+    generatorVersion: hierarchy.generatorVersion,
+    regionRadius: hierarchy.regionRadius,
+  });
+  const canonicalGateIds = canonicalGateIdsForHierarchy(hierarchy, context);
+  const departure =
+    typeof departureGateId === "string"
+      ? logicalGateReference(context, departureGateId as StableId, hierarchy.hasMaterializedGate)
+      : undefined;
+  const destination =
+    typeof destinationGateId === "string"
+      ? logicalGateReference(context, destinationGateId as StableId, hierarchy.hasMaterializedGate)
+      : undefined;
+  if (
+    departure === undefined &&
+    (typeof departureGateId !== "string" || !canonicalGateIds.has(departureGateId as StableId))
+  ) {
+    addClusterRouteIssue(
+      issues,
+      "unknown-gate",
+      "request.departureGateId",
+      "The selected departure Gate is not a deterministic hierarchical or canonical endpoint for this Scenario.",
+      "gate",
+      departureGateId as StableId | undefined,
+    );
+  }
+  if (
+    destination === undefined &&
+    (typeof destinationGateId !== "string" || !canonicalGateIds.has(destinationGateId as StableId))
+  ) {
+    addClusterRouteIssue(
+      issues,
+      "unknown-gate",
+      "request.destinationGateId",
+      "The selected destination Gate is not a deterministic hierarchical or canonical endpoint for this Scenario.",
+      "gate",
+      destinationGateId as StableId | undefined,
+    );
+  }
+  return Object.freeze({
+    routeRequest,
+    departureGateId: (departureGateId as StableId | undefined) ?? hierarchy.defaultDepartureGateId,
+    destinationGateId:
+      (destinationGateId as StableId | undefined) ?? hierarchy.defaultDestinationGateId,
+    refinementBudget: budget,
+    issues: Object.freeze(issues),
+  });
+}
+
+function addLogicalCandidateEdge(
+  edges: Map<string, GeneratedEdge>,
+  edge: GeneratedEdge | undefined,
+): void {
+  if (edge === undefined) {
+    return;
+  }
+  const key = `${edge.a}:${edge.b}:${edge.identity ?? ""}`;
+  const existing = edges.get(key);
+  if (existing === undefined || (existing.kind === "backbone" && edge.kind === "shortcut")) {
+    edges.set(key, edge);
+  }
+}
+
+type LogicalCandidate = {
+  readonly edges: readonly GeneratedEdge[];
+  readonly completedDepth: number;
+  readonly candidateGraphEdgeCount: number;
+  readonly addedRefinementEdgeCount: number;
+};
+
+type LogicalCandidateGraph = {
+  readonly candidates: readonly LogicalCandidate[];
+};
+
+function logicalCandidateEdges(
+  context: GeneratorContext,
+  departure: LogicalGateReference,
+  destination: LogicalGateReference,
+  refinementDepth: number,
+): LogicalCandidateGraph {
+  const endpointEdges = new Map<string, GeneratedEdge>();
+  addLogicalCandidateEdge(endpointEdges, {
+    ...logicalEdge(departure.a, departure.b, context),
+    identity: departure.edgeIdentity,
+  });
+  addLogicalCandidateEdge(endpointEdges, {
+    ...logicalEdge(destination.a, destination.b, context),
+    identity: destination.edgeIdentity,
+  });
+  const baseline = new Map<string, GeneratedEdge>();
+  for (const edge of logicalTreePath(departure.systemIndex, destination.systemIndex, context)) {
+    addLogicalCandidateEdge(baseline, edge);
+  }
+  for (const edge of endpointEdges.values()) {
+    addLogicalCandidateEdge(baseline, edge);
+  }
+  const baselineCandidate: LogicalCandidate = Object.freeze({
+    edges: Object.freeze([...baseline.values()]),
+    completedDepth: 0,
+    candidateGraphEdgeCount: baseline.size,
+    addedRefinementEdgeCount: 0,
+  });
+  if (refinementDepth === 0) {
+    return { candidates: Object.freeze([baselineCandidate]) };
+  }
+
+  const refined = new Map(baseline);
+  let addedRefinementEdgeCount = 0;
+  // The baseline candidate is deliberately retained as the first candidate. Deeper candidates
+  // add edges cumulatively, so a supplemental search can never discard a feasible baseline plan.
+  for (let level = 1; level <= refinementDepth; level += 1) {
+    const edgeCountBeforeLevel = refined.size;
+    const start = level % 2 === 0 ? departure.systemIndex : departure.otherSystemIndex;
+    const destinationIndex =
+      level % 2 === 0 ? destination.otherSystemIndex : destination.systemIndex;
+    addLogicalCandidateEdge(refined, logicalShortcutEdge(context, start, destinationIndex, level));
+    const startParent = logicalParentIndex(start);
+    const destinationParent = logicalParentIndex(destinationIndex);
+    if (startParent !== undefined && destinationParent !== undefined) {
+      addLogicalCandidateEdge(
+        refined,
+        logicalShortcutEdge(context, startParent, destinationParent, level),
+      );
+    }
+    addedRefinementEdgeCount += refined.size - edgeCountBeforeLevel;
+  }
+  if (refined.size === baseline.size) {
+    return {
+      candidates: Object.freeze([
+        Object.freeze({ ...baselineCandidate, completedDepth: refinementDepth }),
+      ]),
+    };
+  }
+  const refinedCandidate: LogicalCandidate = Object.freeze({
+    edges: Object.freeze([...refined.values()]),
+    completedDepth: refinementDepth,
+    candidateGraphEdgeCount: refined.size,
+    addedRefinementEdgeCount,
+  });
+  return { candidates: Object.freeze([baselineCandidate, refinedCandidate]) };
+}
+
+function routeCandidateLimit(request: Readonly<Record<string, unknown>>): number | undefined {
+  const suppliedBudget = request.searchBudget;
+  const candidateValue =
+    typeof suppliedBudget === "number"
+      ? suppliedBudget
+      : isRecord(suppliedBudget)
+        ? (suppliedBudget.maxCandidateRoutes ?? suppliedBudget.maxCandidates)
+        : undefined;
+  return typeof candidateValue === "number" &&
+    Number.isSafeInteger(candidateValue) &&
+    candidateValue > 0
+    ? candidateValue
+    : undefined;
+}
+
+function routeRequestWithBoundedCandidateBudget(
+  request: Readonly<Record<string, unknown>>,
+  budget: ClusterRouteRefinementBudget,
+  candidateLimit: number,
+): Readonly<Record<string, unknown>> {
+  const suppliedBudget = request.searchBudget;
+  if (isRecord(suppliedBudget)) {
+    const suppliedCandidateLimit =
+      suppliedBudget.maxCandidateRoutes ?? suppliedBudget.maxCandidates;
+    const maxCandidateRoutes =
+      suppliedCandidateLimit === undefined
+        ? candidateLimit
+        : typeof suppliedCandidateLimit === "number" && Number.isSafeInteger(suppliedCandidateLimit)
+          ? Math.min(candidateLimit, suppliedCandidateLimit)
+          : suppliedCandidateLimit;
+    return Object.freeze({
+      ...request,
+      searchBudget: Object.freeze({
+        ...suppliedBudget,
+        maxCandidateRoutes,
+      }),
+    });
+  }
+  if (typeof suppliedBudget === "number") {
+    const boundedCandidateLimit =
+      Number.isSafeInteger(suppliedBudget) && suppliedBudget > 0
+        ? Math.min(candidateLimit, suppliedBudget)
+        : suppliedBudget;
+    return Object.freeze({
+      ...request,
+      searchBudget: boundedCandidateLimit,
+    });
+  }
+  return Object.freeze({
+    ...request,
+    searchBudget: Object.freeze({
+      maxCandidateRoutes: candidateLimit,
+      maxSearchStates: Math.min(10_000, Math.max(256, budget.maxMaterializedSystems * 8)),
+    }),
+  });
+}
+
+function scenarioForLogicalCandidate(
+  hierarchy: HierarchicalClusterRegion,
+  routeRequest: Readonly<Record<string, unknown>>,
+  context: GeneratorContext,
+  departure: LogicalGateReference,
+  destination: LogicalGateReference,
+  edges: readonly GeneratedEdge[],
+): CompiledScenario | undefined {
+  const indices = new Set<number>([departure.a, departure.b, destination.a, destination.b]);
+  for (const edge of edges) {
+    indices.add(edge.a);
+    indices.add(edge.b);
+  }
+  const logicalSystemIndices = [...indices].sort((left, right) => left - right);
+  if (logicalSystemIndices.length > MAX_CLUSTER_MATERIALIZED_SYSTEM_COUNT) {
+    return undefined;
+  }
+  const points = Object.freeze(
+    logicalSystemIndices.map((index) => ({
+      index,
+      id: generatedSystemId(context, index),
+      position: generatedPosition(context, `generated-system:${index}`),
+    })),
+  );
+  const records = createGeneratedRecords(context, points, edges);
+  const sourceRequest = hierarchy.sourceRequest;
+  const base = normalizeBaseScenario(
+    sourceRequest.canonicalScenario ?? sourceRequest.baseScenario,
+    context,
+  );
+  const recordsWithCanonical = attachUnpairedCanonicalGates(
+    context,
+    records,
+    base.gates,
+    base.connections,
+  );
+  assertGeneratedIdCollisions(
+    base,
+    recordsWithCanonical,
+    base.shipProfiles.length === 0 && sourceRequest.shipProfiles === undefined,
+  );
+  const request: ClusterGenerationRequest = {
+    ...sourceRequest,
+    logicalPopulation: hierarchy.logicalPopulation,
+    materializedSystemCount: points.length,
+    seed: hierarchy.seed,
+    generatorVersion: hierarchy.generatorVersion,
+    regionRadius: hierarchy.regionRadius,
+    routeRequest,
+  };
+  const statistics = buildStatistics(context, points);
+  const scenarioInput = scenarioInputForRegion(
+    request,
+    context,
+    base,
+    recordsWithCanonical,
+    statistics,
+  );
+  const compiled = compileScenario(scenarioInput);
+  return compiled.ok ? compiled.scenario : undefined;
+}
+
+function logicalArrivalBounds(
+  context: GeneratorContext,
+  request: Readonly<Record<string, unknown>>,
+  plan: RoutePlan,
+  departure: LogicalGateReference,
+  destination: LogicalGateReference,
+): ClusterRouteBounds {
+  const departureCoordinateTime =
+    isRecord(request.departureCoordinateTime) &&
+    request.departureCoordinateTime.unit === "s" &&
+    typeof request.departureCoordinateTime.value === "number" &&
+    Number.isFinite(request.departureCoordinateTime.value)
+      ? request.departureCoordinateTime.value
+      : 0;
+  const hasUncertainty = plan.uncertainty.hasUncertainty;
+  const departurePosition = positionWithOffset(
+    generatedPosition(context, `generated-system:${departure.systemIndex}`),
+    gateOffset(context, logicalEdgeIdentity(departure.a, departure.b), departure.endpoint),
+  );
+  const destinationPosition = positionWithOffset(
+    generatedPosition(context, `generated-system:${destination.systemIndex}`),
+    gateOffset(context, logicalEdgeIdentity(destination.a, destination.b), destination.endpoint),
+  );
+  const lower = seconds(
+    departureCoordinateTime +
+      Math.min(
+        plan.arrivalCoordinateTime.value - departureCoordinateTime,
+        positionDistance(departurePosition, destinationPosition) / SPEED_OF_LIGHT.value,
+      ),
+  );
+  const earliestArrivalLowerBound = hasUncertainty ? seconds(departureCoordinateTime) : lower;
+  const bestKnownUpperBound = plan.arrivalCoordinateTime;
+  return Object.freeze({
+    earliestArrivalLowerBound,
+    bestKnownUpperBound,
+    lowerBound: earliestArrivalLowerBound,
+    upperBound: bestKnownUpperBound,
+    conservativeUpperBound: plan.arrivalBounds.upper,
+    gap: seconds(Math.max(0, bestKnownUpperBound.value - earliestArrivalLowerBound.value)),
+    lowerBoundMethod: hasUncertainty ? "zero-duration" : "straight-line-light-speed",
+    upperBoundMethod: "simulated-route",
+  });
+}
+
+function boundedClusterFailure(
+  outcome: ClusterRoutePlanningFailure["outcome"],
+  issues: readonly RoutePlanningIssue[],
+  search: ClusterRoutePlanningSearchStats | undefined,
+): ClusterRoutePlanningFailure {
+  return Object.freeze({
+    kind: "cluster-route-planning" as const,
+    ok: false as const,
+    outcome,
+    plan: undefined,
+    bestPlan: undefined,
+    alternatives: Object.freeze([] as const),
+    sensitivity: Object.freeze([] as const),
+    sensitivityAlternatives: Object.freeze([] as const),
+    bounds: undefined,
+    earliestArrivalLowerBound: undefined,
+    bestKnownUpperBound: undefined,
+    lowerBound: undefined,
+    upperBound: undefined,
+    conservativeUpperBound: undefined,
+    refinementQuality: undefined,
+    refinementScore: undefined,
+    refinement: undefined,
+    globallyOptimal: false as const,
+    optimality: undefined,
+    search,
+    issues: Object.freeze([...issues]),
+  });
+}
+
+type ClusterRouteEvaluation = {
+  readonly bestPlan: RoutePlan;
+  readonly bestBounds: ClusterRouteBounds;
+  readonly alternatives: readonly RoutePlan[];
+  readonly sensitivity: readonly RouteSensitivity[];
+  readonly sensitivityAlternatives: readonly RouteSensitivity[];
+  readonly search: ClusterRoutePlanningSearchStats;
+};
+
+function canonicalArrivalBounds(plan: RoutePlan): ClusterRouteBounds {
+  const earliestArrivalLowerBound = plan.earliestArrivalLowerBound;
+  const bestKnownUpperBound = plan.bestKnownUpperBound;
+  return Object.freeze({
+    earliestArrivalLowerBound,
+    bestKnownUpperBound,
+    lowerBound: earliestArrivalLowerBound,
+    upperBound: bestKnownUpperBound,
+    conservativeUpperBound: plan.arrivalBounds.upper,
+    gap: seconds(Math.max(0, bestKnownUpperBound.value - earliestArrivalLowerBound.value)),
+    lowerBoundMethod: "zero-duration" as const,
+    upperBoundMethod: "simulated-route" as const,
+  });
+}
+
+function boundedClusterSuccess(
+  evaluation: ClusterRouteEvaluation,
+  requestedDepth: number,
+  completedDepth: number,
+  searchExhausted: boolean,
+): ClusterRoutePlanningSuccess {
+  const alternatives = [...evaluation.alternatives];
+  alternatives.sort((left, right) => {
+    const arrival = left.arrivalCoordinateTime.value - right.arrivalCoordinateTime.value;
+    return arrival !== 0
+      ? arrival
+      : `${left.gateIds.join(">")}|${left.connectionIds.join(">")}`.localeCompare(
+          `${right.gateIds.join(">")}|${right.connectionIds.join(">")}`,
+        );
+  });
+  const lowerBound = evaluation.bestBounds.earliestArrivalLowerBound;
+  const upperBound = evaluation.bestBounds.bestKnownUpperBound;
+  const boundGap = seconds(Math.max(0, upperBound.value - lowerBound.value));
+  const boundScale = Math.max(1, Math.abs(upperBound.value), Math.abs(lowerBound.value));
+  const refinementScore = Math.max(0, Math.min(1, 1 - boundGap.value / boundScale));
+  const boundedPlan = Object.freeze({
+    ...evaluation.bestPlan,
+    refinementQuality: "hierarchical-bounded" as const,
+    refinementScore,
+    globallyOptimal: false as const,
+    optimality: "best-known-upper-bound" as const,
+    earliestArrivalLowerBound: lowerBound,
+    bestKnownUpperBound: upperBound,
+    lowerBound,
+    upperBound,
+  });
+  const bounds = conservativeBounds(
+    upperBound,
+    lowerBound,
+    seconds(Math.max(upperBound.value, evaluation.bestBounds.conservativeUpperBound.value)),
+    evaluation.bestPlan.timeline.displayPrecision,
+  );
+  const refinement = Object.freeze({
+    kind: "hierarchical-bounded" as const,
+    requestedDepth,
+    completedDepth,
+    score: refinementScore,
+    boundGap,
+    candidateGraphEdgeCount: evaluation.search.candidateGraphEdgeCount,
+    addedRefinementEdgeCount: evaluation.search.addedRefinementEdgeCount,
+    searchExhausted,
+    globallyOptimal: false as const,
+    optimality: "best-known-upper-bound" as const,
+    proof: "bounded-candidate-search" as const,
+  });
+  return Object.freeze({
+    kind: "cluster-route-planning" as const,
+    ok: true as const,
+    outcome: "success" as const,
+    plan: boundedPlan,
+    bestPlan: boundedPlan,
+    alternatives: Object.freeze(alternatives.slice(0, 10)),
+    sensitivity: evaluation.sensitivity,
+    sensitivityAlternatives: evaluation.sensitivityAlternatives,
+    bounds,
+    earliestArrivalLowerBound: lowerBound,
+    bestKnownUpperBound: upperBound,
+    lowerBound,
+    upperBound,
+    conservativeUpperBound: evaluation.bestBounds.conservativeUpperBound,
+    refinementQuality: "hierarchical-bounded" as const,
+    refinementScore,
+    refinement,
+    globallyOptimal: false as const,
+    optimality: "best-known-upper-bound" as const,
+    search: evaluation.search,
+    issues: [] as const,
+  });
+}
+
+/**
+ * Plans a bounded route through a logical hierarchical Cluster population.
+ *
+ * Only exact endpoint Gates and the finite candidate paths selected by `refinementDepth` are
+ * materialized. Candidate simulation is delegated to `planJourney`, preserving uncertainty,
+ * Provenance filters, strategic-wait limits, and explicit Gate endpoint semantics. The result is
+ * a feasible upper bound and never a claim of global optimality.
+ *
+ * @param hierarchy - A deterministic logical Cluster descriptor.
+ * @param request - Exact Gate endpoints, route controls, and finite refinement controls.
+ * @returns A bounded Route Plan with independently checkable arrival bounds or a structured failure.
+ */
+export function planClusterRoute(
+  hierarchy: HierarchicalClusterRegion,
+  request: ClusterRoutePlanningRequest,
+): ClusterRoutePlanningResult;
+export function planClusterRoute(
+  hierarchy: HierarchicalClusterRegion,
+  request: unknown,
+): ClusterRoutePlanningResult;
+export function planClusterRoute(
+  hierarchy: HierarchicalClusterRegion,
+  request: unknown,
+): ClusterRoutePlanningResult {
+  const parsed = parseClusterRouteRequest(request, hierarchy);
+  if (parsed === undefined || parsed.issues.length > 0) {
+    return boundedClusterFailure(
+      "invalid",
+      parsed?.issues ?? [
+        {
+          code: "invalid-request",
+          path: "request",
+          message: "The logical Cluster route request is invalid.",
+          entityType: undefined,
+          entityId: undefined,
+          relatedId: undefined,
+          causeCode: undefined,
+        },
+      ],
+      undefined,
+    );
+  }
+  const context = buildContext({
+    logicalPopulation: hierarchy.logicalPopulation,
+    materializedSystemCount: parsed.refinementBudget.maxMaterializedSystems,
+    seed: hierarchy.seed,
+    generatorVersion: hierarchy.generatorVersion,
+    regionRadius: hierarchy.regionRadius,
+  });
+  const canonicalGateIds = canonicalGateIdsForHierarchy(hierarchy, context);
+  const departureIsCanonical = canonicalGateIds.has(parsed.departureGateId);
+  const destinationIsCanonical = canonicalGateIds.has(parsed.destinationGateId);
+  const departure = departureIsCanonical
+    ? undefined
+    : logicalGateReference(context, parsed.departureGateId, hierarchy.hasMaterializedGate);
+  const destination = destinationIsCanonical
+    ? undefined
+    : logicalGateReference(context, parsed.destinationGateId, hierarchy.hasMaterializedGate);
+  if (departureIsCanonical !== destinationIsCanonical) {
+    return boundedClusterFailure(
+      "invalid",
+      [
+        {
+          code: "invalid-request",
+          path: "request",
+          message:
+            "Mixed canonical and generated hierarchical Gate endpoints are not supported by one bounded candidate graph.",
+          entityType: "gate",
+          entityId: parsed.departureGateId,
+          relatedId: parsed.destinationGateId,
+          causeCode: undefined,
+        },
+      ],
+      undefined,
+    );
+  }
+  if (departureIsCanonical && destinationIsCanonical) {
+    const candidateRouteLimit = Math.min(
+      parsed.refinementBudget.maxCandidateRoutes,
+      routeCandidateLimit(parsed.routeRequest) ?? parsed.refinementBudget.maxCandidateRoutes,
+    );
+    const candidateRouteRequest = routeRequestWithBoundedCandidateBudget(
+      parsed.routeRequest,
+      parsed.refinementBudget,
+      candidateRouteLimit,
+    );
+    const canonicalScenario = scenarioForCanonicalCandidate(
+      hierarchy,
+      candidateRouteRequest,
+      context,
+    );
+    const searchBase = {
+      refinementDepth: parsed.refinementBudget.refinementDepth,
+      completedRefinementDepth: 0,
+      candidateGraphEdgeCount: canonicalScenario?.gateConnections.length ?? 0,
+      addedRefinementEdgeCount: 0,
+      candidateRoutesEvaluated: 0,
+      materializedRegionCount: 0,
+      materializedSystemCount: canonicalScenario?.systems.length ?? 0,
+      budget: parsed.refinementBudget,
+      candidateRouteKeys: Object.freeze([
+        `canonical:${parsed.departureGateId}>${parsed.destinationGateId}`,
+      ]),
+    } satisfies ClusterRoutePlanningSearchStats;
+    if (canonicalScenario === undefined) {
+      return boundedClusterFailure(
+        "invalid",
+        [
+          {
+            code: "no-valid-route",
+            path: "scenario",
+            message:
+              "The canonical/base Scenario could not be compiled for bounded route planning.",
+            entityType: undefined,
+            entityId: undefined,
+            relatedId: undefined,
+            causeCode: undefined,
+          },
+        ],
+        Object.freeze(searchBase),
+      );
+    }
+    const explicit = planJourney(canonicalScenario, candidateRouteRequest);
+    const search = Object.freeze({
+      ...searchBase,
+      candidateRoutesEvaluated: explicit.search?.candidateRoutesEvaluated ?? 0,
+    });
+    if (!explicit.ok) {
+      return boundedClusterFailure(explicit.outcome, explicit.issues, search);
+    }
+    return boundedClusterSuccess(
+      {
+        bestPlan: explicit.plan,
+        bestBounds: canonicalArrivalBounds(explicit.plan),
+        alternatives: explicit.alternatives,
+        sensitivity: explicit.sensitivity,
+        sensitivityAlternatives: explicit.sensitivityAlternatives,
+        search,
+      },
+      parsed.refinementBudget.refinementDepth,
+      0,
+      false,
+    );
+  }
+  if (departure === undefined || destination === undefined) {
+    return boundedClusterFailure(
+      "invalid",
+      [
+        {
+          code: "unknown-gate",
+          path: "request.departureGateId",
+          message: "The selected hierarchical Gate endpoint is not known for this Scenario.",
+          entityType: "gate",
+          entityId: parsed.departureGateId,
+          relatedId: parsed.destinationGateId,
+          causeCode: undefined,
+        },
+      ],
+      undefined,
+    );
+  }
+  const candidateGraph = logicalCandidateEdges(
+    context,
+    departure,
+    destination,
+    parsed.refinementBudget.refinementDepth,
+  );
+  const candidateCandidates = candidateGraph.candidates.slice(
+    0,
+    parsed.refinementBudget.maxCandidateRoutes,
+  );
+  const suppliedCandidateLimit = routeCandidateLimit(parsed.routeRequest);
+  const totalCandidateRouteBudget = Math.min(
+    parsed.refinementBudget.maxCandidateRoutes,
+    suppliedCandidateLimit ?? parsed.refinementBudget.maxCandidateRoutes,
+  );
+  const candidateRouteKeys: string[] = [];
+  let candidateRoutesEvaluated = 0;
+  let materializedRegionCount = 0;
+  let materializedSystemCount = 0;
+  let evaluatedGraphEdgeCount = 0;
+  let evaluatedAddedRefinementEdgeCount = 0;
+  let completedRefinementDepth = 0;
+  let remainingCandidateRouteBudget = totalCandidateRouteBudget;
+  let supplementalSearchExhausted = candidateCandidates.length < candidateGraph.candidates.length;
+  let bestPlan: RoutePlan | undefined;
+  let bestBounds: ClusterRouteBounds | undefined;
+  let bestSensitivity: readonly RouteSensitivity[] = Object.freeze([]);
+  let bestSensitivityAlternatives: readonly RouteSensitivity[] = Object.freeze([]);
+  const alternatives: RoutePlan[] = [];
+  const routeIssues: RoutePlanningIssue[] = [];
+  let sawDisconnected = false;
+  let sawIncomplete = false;
+  for (let candidateIndex = 0; candidateIndex < candidateCandidates.length; candidateIndex += 1) {
+    const candidate = candidateCandidates[candidateIndex];
+    if (candidate === undefined) {
+      continue;
+    }
+    if (remainingCandidateRouteBudget <= 0) {
+      supplementalSearchExhausted = candidateIndex > 0;
+      break;
+    }
+    const systems = new Set<number>([departure.a, departure.b, destination.a, destination.b]);
+    for (const edge of candidate.edges) {
+      systems.add(edge.a);
+      systems.add(edge.b);
+    }
+    if (systems.size > parsed.refinementBudget.maxMaterializedSystems) {
+      supplementalSearchExhausted ||= candidateIndex > 0;
+      continue;
+    }
+    materializedRegionCount += 1;
+    materializedSystemCount += systems.size;
+    evaluatedGraphEdgeCount = Math.max(evaluatedGraphEdgeCount, candidate.candidateGraphEdgeCount);
+    evaluatedAddedRefinementEdgeCount = Math.max(
+      evaluatedAddedRefinementEdgeCount,
+      candidate.addedRefinementEdgeCount,
+    );
+    candidateRouteKeys.push(
+      candidate.edges
+        .map((edge) => edge.identity ?? `${edge.a}-${edge.b}`)
+        .sort()
+        .join(","),
+    );
+    const candidateRouteRequest = routeRequestWithBoundedCandidateBudget(
+      parsed.routeRequest,
+      parsed.refinementBudget,
+      remainingCandidateRouteBudget,
+    );
+    const candidateScenario = scenarioForLogicalCandidate(
+      hierarchy,
+      candidateRouteRequest,
+      Object.freeze({ ...context, materializedSystemCount: systems.size }),
+      departure,
+      destination,
+      candidate.edges,
+    );
+    if (candidateScenario === undefined) {
+      supplementalSearchExhausted ||= candidateIndex > 0;
+      continue;
+    }
+    const explicit = planJourney(candidateScenario, candidateRouteRequest);
+    const evaluatedByPlanner = explicit.search?.candidateRoutesEvaluated ?? 0;
+    candidateRoutesEvaluated += evaluatedByPlanner;
+    remainingCandidateRouteBudget = Math.max(0, remainingCandidateRouteBudget - evaluatedByPlanner);
+    if (!explicit.ok) {
+      sawDisconnected ||= explicit.outcome === "disconnected";
+      sawIncomplete ||= explicit.outcome === "incomplete";
+      supplementalSearchExhausted ||= explicit.outcome === "incomplete";
+      routeIssues.push(...explicit.issues);
+      continue;
+    }
+    completedRefinementDepth = Math.max(completedRefinementDepth, candidate.completedDepth);
+    const candidatePlan = explicit.plan;
+    const candidateBounds = logicalArrivalBounds(
+      context,
+      candidateRouteRequest,
+      candidatePlan,
+      departure,
+      destination,
+    );
+    if (
+      bestPlan === undefined ||
+      candidatePlan.arrivalCoordinateTime.value < bestPlan.arrivalCoordinateTime.value
+    ) {
+      if (bestPlan !== undefined) {
+        alternatives.push(bestPlan);
+      }
+      bestPlan = candidatePlan;
+      bestBounds = candidateBounds;
+      bestSensitivity = explicit.sensitivity;
+      bestSensitivityAlternatives = explicit.sensitivityAlternatives;
+    } else {
+      alternatives.push(candidatePlan);
+    }
+    if (remainingCandidateRouteBudget <= 0 && candidateIndex < candidateCandidates.length - 1) {
+      supplementalSearchExhausted = true;
+    }
+  }
+  const search = Object.freeze({
+    refinementDepth: parsed.refinementBudget.refinementDepth,
+    completedRefinementDepth,
+    candidateGraphEdgeCount: evaluatedGraphEdgeCount,
+    addedRefinementEdgeCount: evaluatedAddedRefinementEdgeCount,
+    candidateRoutesEvaluated,
+    materializedRegionCount,
+    materializedSystemCount,
+    budget: parsed.refinementBudget,
+    candidateRouteKeys: Object.freeze(candidateRouteKeys),
+  });
+  if (bestPlan === undefined || bestBounds === undefined) {
+    const outcome: ClusterRoutePlanningFailure["outcome"] =
+      candidateRouteKeys.length < candidateCandidates.length || sawIncomplete
+        ? "incomplete"
+        : sawDisconnected
+          ? "disconnected"
+          : "invalid";
+    return boundedClusterFailure(
+      outcome,
+      routeIssues.length > 0
+        ? routeIssues
+        : [
+            {
+              code: "no-valid-route",
+              path: "routes",
+              message: "No bounded hierarchical candidate produced a valid Route Plan.",
+              entityType: undefined,
+              entityId: undefined,
+              relatedId: undefined,
+              causeCode: undefined,
+            },
+          ],
+      search,
+    );
+  }
+  return boundedClusterSuccess(
+    {
+      bestPlan,
+      bestBounds,
+      alternatives,
+      sensitivity: bestSensitivity,
+      sensitivityAlternatives: bestSensitivityAlternatives,
+      search,
+    },
+    parsed.refinementBudget.refinementDepth,
+    completedRefinementDepth,
+    supplementalSearchExhausted,
+  );
+}
+
+/**
+ * Alias for {@link planClusterRoute} using hierarchical-route terminology.
+ *
+ * @param hierarchy - A deterministic logical Cluster descriptor.
+ * @param request - Exact Gate endpoints and finite route controls.
+ * @returns The bounded logical route result.
+ */
+export const planHierarchicalRoute = planClusterRoute;
+
+/**
+ * Alias for {@link planClusterRoute} for generated-region callers.
+ *
+ * @param hierarchy - A deterministic logical Cluster descriptor.
+ * @param request - Exact Gate endpoints and finite route controls.
+ * @returns The bounded logical route result.
+ */
+export const planGeneratedClusterRoute = planClusterRoute;
+
+/**
+ * Generates, compiles, and immediately routes a finite deterministic Cluster region.
+ *
+ * Generated content is marked with `generated` Provenance whose source includes the generator
+ * version and seed. The CPU reference implementation materializes only the requested finite
+ * sample, uses a truncated Plummer radial profile, creates a nearest-neighbour connectivity
+ * backbone, and adds a small deterministic set of long-distance shortcuts. The resulting Scenario
+ * is compiled through the normal model seam and the default endpoints are planned through the
+ * normal explicit earliest-arrival route planner; no routing implementation is duplicated here.
+ *
+ * @param request - Logical population, seed, generator version, and optional canonical base data.
+ * @returns A frozen generated region containing its compiled Scenario, audit statistics, and route.
+ * @throws RangeError when the finite generation request is invalid or its default route cannot be
+ * planned.
+ */
+export function generateClusterRegion(request: ClusterGenerationRequest): GeneratedClusterRegion {
+  const context = buildContext(request);
+  const hierarchy = createHierarchicalRegion(request, context);
+  const baseValue = request.canonicalScenario ?? request.baseScenario;
+  const base = normalizeBaseScenario(baseValue, context);
+  const points = createPoints(context);
+  const backbone = buildBackbone(points);
+  const shortcuts = buildShortcuts(context, points, backbone);
+  const edges = Object.freeze([...backbone, ...shortcuts]);
+  return buildGeneratedRegionResult(
+    context,
+    request,
+    base,
+    hierarchy,
+    hierarchy.root,
+    Object.freeze(points.map((point) => point.index)),
+    points,
+    edges,
+  );
 }
 
 /**

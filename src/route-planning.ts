@@ -1,4 +1,5 @@
 import { seconds, type Seconds } from "./quantities";
+import { executionControlFor, type WorkerPlanningExecutionControl } from "./execution-control";
 import type {
   CompiledGate,
   CompiledGateConnection,
@@ -1554,6 +1555,7 @@ function searchCandidateRoutes(
   network: RouteNetwork,
   request: ParsedRoutePlanningRequest,
   visitCandidate: RouteCandidateVisitor,
+  control: WorkerPlanningExecutionControl | undefined,
 ): RouteSearchState {
   const state: RouteSearchState = {
     candidateRoutesEvaluated: 0,
@@ -1575,6 +1577,7 @@ function searchCandidateRoutes(
     path: RoutePath,
     visitedGateIds: ReadonlySet<StableId>,
   ): void => {
+    control?.checkpoint();
     if (state.exhausted) {
       return;
     }
@@ -2021,9 +2024,11 @@ function bestStrategicDwellCandidate(
   currentArrival: Seconds,
   durations: readonly Seconds[],
   state: RouteSearchState,
+  control: WorkerPlanningExecutionControl | undefined,
 ): StrategicDwellCandidate | undefined {
   let best: StrategicDwellCandidate | undefined;
   for (const duration of durations) {
+    control?.checkpoint();
     if (duration.value === 0) {
       continue;
     }
@@ -2065,6 +2070,7 @@ function optimizeStrategicDwells(
   state: RouteSearchState,
   simulationIssues: RoutePlanningIssue[],
   candidateIndex: number,
+  control: WorkerPlanningExecutionControl | undefined,
 ): OptimizedRouteCandidate | undefined {
   const routeSimulation = simulationScenarioForRoute(scenario, path, request.shipProfileId);
   const baselineResult = simulateCandidate(routeSimulation.scenario, request, path);
@@ -2086,6 +2092,7 @@ function optimizeStrategicDwells(
   const candidateGateIds = path.gateIds.slice(0, -1);
 
   for (const gateId of candidateGateIds) {
+    control?.checkpoint();
     if (!(remainingWait > 0)) {
       break;
     }
@@ -2098,6 +2105,7 @@ function optimizeStrategicDwells(
       currentArrival,
       strategicDwellDurations(remainingWait),
       state,
+      control,
     );
     if (state.exhausted) {
       return undefined;
@@ -2116,6 +2124,7 @@ function optimizeStrategicDwells(
         currentArrival,
         strategicDwellRefinementDurations(remainingWait, best.duration.value, refinementSpan),
         state,
+        control,
       );
       if (state.exhausted) {
         return undefined;
@@ -2191,6 +2200,7 @@ export function planJourney(scenario: CompiledScenario, request: unknown): Route
 
 export function planJourney(scenario: CompiledScenario, request: unknown): RoutePlanningResult {
   const issues: RoutePlanningIssue[] = [];
+  const control = executionControlFor(request);
   const parsed = readRequest(request, scenario.epoch.coordinateTime, issues);
   if (parsed === undefined) {
     return failure("invalid", issues);
@@ -2316,6 +2326,7 @@ export function planJourney(scenario: CompiledScenario, request: unknown): Route
         searchState,
         simulationIssues,
         candidateIndex,
+        control,
       );
       if (optimized === undefined) {
         return;
@@ -2334,6 +2345,7 @@ export function planJourney(scenario: CompiledScenario, request: unknown): Route
       candidateSummaries.push(candidateSummary(plan));
       retainPlan(retainedPlans, plan, maximumStoredPlans);
     },
+    control,
   );
   const refinementQuality: RoutePlanningRefinementQuality =
     parsed.effectiveMaximumStrategicWait.value > 0 &&

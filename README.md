@@ -4,8 +4,10 @@ The headless Journey Model is a Bun and TypeScript module for compiling and insp
 validated Centauri Cluster Scenario, simulating Interstellar Cruises between hierarchical,
 Keplerian Gate worldlines, simulating powered In-system Transfers between moving Gates, and
 planning earliest-arrival Journeys through a finite explicit Gate network. The CPU reference
-also generates deterministic, provenance-marked Cluster regions; workers and the browser
-application are implemented by later tickets.
+also generates deterministic, provenance-marked Cluster regions. A framework-independent,
+versioned worker-planning adapter runs generation, route planning, and bounded refinement through
+injectable Worker-like ports with correlated progress and cancellation; the browser application is
+implemented by a later ticket.
 
 ## Commands
 
@@ -19,6 +21,12 @@ Run the deterministic minimal Scenario demonstration:
 
 ```sh
 bun run demo
+```
+
+Run the responsive native-worker planning and cancellation demonstration:
+
+```sh
+bun run worker-demo
 ```
 
 Format, lint, type-check, and test independently with:

@@ -1,4 +1,9 @@
 import {
+  executionControlFor,
+  attachExecutionControl,
+  type WorkerPlanningExecutionControl,
+} from "./execution-control";
+import {
   SPEED_OF_LIGHT,
   meters,
   metersPerSecond,
@@ -1277,7 +1282,10 @@ function addEdgeKey(a: number, b: number): string {
 }
 
 /** Prim's algorithm with one cached nearest connected candidate per unconnected point. */
-function buildBackbone(points: readonly GeneratedPoint[]): readonly GeneratedEdge[] {
+function buildBackbone(
+  points: readonly GeneratedPoint[],
+  control: WorkerPlanningExecutionControl | undefined = undefined,
+): readonly GeneratedEdge[] {
   const connected = new Uint8Array(points.length);
   const nearestConnected = new Int32Array(points.length);
   const nearestDistance = new Float64Array(points.length);
@@ -1290,6 +1298,9 @@ function buildBackbone(points: readonly GeneratedPoint[]): readonly GeneratedEdg
     throw new RangeError("The generated point set could not produce a connectivity backbone.");
   }
   for (let candidate = 1; candidate < points.length; candidate += 1) {
+    if (candidate % 64 === 0) {
+      control?.checkpoint();
+    }
     const point = points[candidate];
     if (point === undefined) {
       continue;
@@ -1300,10 +1311,14 @@ function buildBackbone(points: readonly GeneratedPoint[]): readonly GeneratedEdg
 
   const edges: GeneratedEdge[] = [];
   for (let step = 1; step < points.length; step += 1) {
+    control?.checkpoint();
     let bestCandidate = -1;
     let bestSource = Number.POSITIVE_INFINITY;
     let bestDistance = Number.POSITIVE_INFINITY;
     for (let candidate = 1; candidate < points.length; candidate += 1) {
+      if (candidate % 64 === 0) {
+        control?.checkpoint();
+      }
       if (connected[candidate] !== 0) {
         continue;
       }
@@ -1329,6 +1344,9 @@ function buildBackbone(points: readonly GeneratedPoint[]): readonly GeneratedEdg
     edges.push({ a: bestSource, b: bestCandidate, distance: bestDistance, kind: "backbone" });
 
     for (let candidate = 1; candidate < points.length; candidate += 1) {
+      if (candidate % 64 === 0) {
+        control?.checkpoint();
+      }
       if (connected[candidate] !== 0) {
         continue;
       }
@@ -1403,6 +1421,7 @@ function buildShortcuts(
   context: GeneratorContext,
   points: readonly GeneratedPoint[],
   backbone: readonly GeneratedEdge[],
+  control: WorkerPlanningExecutionControl | undefined = undefined,
 ): readonly GeneratedEdge[] {
   if (points.length < SHORTCUT_MINIMUM_SYSTEM_COUNT) {
     return Object.freeze([]);
@@ -1413,11 +1432,15 @@ function buildShortcuts(
   const fallbackCandidates: FallbackShortcutCandidate[] = [];
   const longDistanceThreshold = context.regionRadius.value * SHORTCUT_LONG_DISTANCE_FACTOR;
   for (let a = 0; a < points.length; a += 1) {
+    control?.checkpoint();
     const source = points[a];
     if (source === undefined) {
       continue;
     }
     for (let b = a + 1; b < points.length; b += 1) {
+      if (b % 64 === 0) {
+        control?.checkpoint();
+      }
       const key = addEdgeKey(a, b);
       if (used.has(key)) {
         continue;
@@ -2586,6 +2609,7 @@ function buildOnDemandRegionEdges(
 function createHierarchicalRegion(
   request: ClusterGenerationRequest,
   context: GeneratorContext,
+  control: WorkerPlanningExecutionControl | undefined = undefined,
 ): HierarchicalClusterRegion {
   const root = createRegionNode(context, 0, context.logicalPopulation, 0, []);
   const lastIndex = context.logicalPopulation - 1;
@@ -2611,6 +2635,7 @@ function createHierarchicalRegion(
       sourceRequest,
       hierarchy,
       materializationRequest,
+      control,
     );
     for (const gateId of generated.generatedGateIds) {
       materializedGateIds.add(gateId);
@@ -2646,12 +2671,14 @@ function materializeHierarchicalRegion(
   sourceRequest: ClusterGenerationRequest,
   hierarchy: HierarchicalClusterRegion,
   materializationRequest: ClusterRegionMaterializationRequest | undefined,
+  control: WorkerPlanningExecutionControl | undefined = undefined,
 ): GeneratedClusterRegion {
   const requestedRegionId = materializationRequest?.regionId ?? hierarchy.root.id;
   const node = regionNodeForId(hierarchy.root, requestedRegionId);
   if (node === undefined) {
     throw new RangeError(`Unknown Cluster region node ${requestedRegionId}.`);
   }
+  control?.checkpoint();
   const indices = materializedLogicalIndices(
     node,
     materializationRequest?.materializedSystemCount,
@@ -2668,6 +2695,7 @@ function materializeHierarchicalRegion(
       position: generatedPosition(materializedContext, `generated-system:${index}`),
     })),
   );
+  control?.checkpoint();
   const edges = buildOnDemandRegionEdges(materializedContext, points);
   const request: ClusterGenerationRequest = Object.freeze({
     ...sourceRequest,
@@ -2687,6 +2715,7 @@ function materializeHierarchicalRegion(
     indices,
     points,
     edges,
+    control,
   );
 }
 
@@ -2699,6 +2728,7 @@ function buildGeneratedRegionResult(
   logicalSystemIndices: readonly number[],
   points: readonly GeneratedPoint[],
   edges: readonly GeneratedEdge[],
+  control: WorkerPlanningExecutionControl | undefined = undefined,
 ): GeneratedClusterRegion {
   let records = createGeneratedRecords(context, points, edges);
   records = attachUnpairedCanonicalGates(context, records, base.gates, base.connections);
@@ -2718,7 +2748,11 @@ function buildGeneratedRegionResult(
   }
   const scenario = compiledResult.scenario;
   const routeRequest = routeRequestForRegion(request, context, scenario, records);
-  const route = planJourney(scenario, routeRequest);
+  control?.checkpoint();
+  const route = planJourney(
+    scenario,
+    control === undefined ? routeRequest : attachExecutionControl(routeRequest, control),
+  );
   if (!route.ok && request.routeRequest === undefined) {
     throw new RangeError(
       `Generated Cluster default route failed: ${route.issues.map((issue) => issue.message).join(" ")}`,
@@ -2796,7 +2830,7 @@ export function generateHierarchicalCluster(
   request: ClusterGenerationRequest,
 ): HierarchicalClusterRegion {
   const context = buildContext(request);
-  return createHierarchicalRegion(request, context);
+  return createHierarchicalRegion(request, context, executionControlFor(request));
 }
 
 /**
@@ -3427,6 +3461,7 @@ export function planClusterRoute(
   hierarchy: HierarchicalClusterRegion,
   request: unknown,
 ): ClusterRoutePlanningResult {
+  const control = executionControlFor(request);
   const parsed = parseClusterRouteRequest(request, hierarchy);
   if (parsed === undefined || parsed.issues.length > 0) {
     return boundedClusterFailure(
@@ -3525,7 +3560,12 @@ export function planClusterRoute(
         Object.freeze(searchBase),
       );
     }
-    const explicit = planJourney(canonicalScenario, candidateRouteRequest);
+    const explicit = planJourney(
+      canonicalScenario,
+      control === undefined
+        ? candidateRouteRequest
+        : attachExecutionControl(candidateRouteRequest, control),
+    );
     const search = Object.freeze({
       ...searchBase,
       candidateRoutesEvaluated: explicit.search?.candidateRoutesEvaluated ?? 0,
@@ -3597,6 +3637,7 @@ export function planClusterRoute(
   let sawDisconnected = false;
   let sawIncomplete = false;
   for (let candidateIndex = 0; candidateIndex < candidateCandidates.length; candidateIndex += 1) {
+    control?.checkpoint();
     const candidate = candidateCandidates[candidateIndex];
     if (candidate === undefined) {
       continue;
@@ -3644,7 +3685,12 @@ export function planClusterRoute(
       supplementalSearchExhausted ||= candidateIndex > 0;
       continue;
     }
-    const explicit = planJourney(candidateScenario, candidateRouteRequest);
+    const explicit = planJourney(
+      candidateScenario,
+      control === undefined
+        ? candidateRouteRequest
+        : attachExecutionControl(candidateRouteRequest, control),
+    );
     const evaluatedByPlanner = explicit.search?.candidateRoutesEvaluated ?? 0;
     candidateRoutesEvaluated += evaluatedByPlanner;
     remainingCandidateRouteBudget = Math.max(0, remainingCandidateRouteBudget - evaluatedByPlanner);
@@ -3767,13 +3813,17 @@ export const planGeneratedClusterRoute = planClusterRoute;
  * planned.
  */
 export function generateClusterRegion(request: ClusterGenerationRequest): GeneratedClusterRegion {
+  const control = executionControlFor(request);
   const context = buildContext(request);
-  const hierarchy = createHierarchicalRegion(request, context);
+  control?.checkpoint();
+  const hierarchy = createHierarchicalRegion(request, context, control);
   const baseValue = request.canonicalScenario ?? request.baseScenario;
   const base = normalizeBaseScenario(baseValue, context);
   const points = createPoints(context);
-  const backbone = buildBackbone(points);
-  const shortcuts = buildShortcuts(context, points, backbone);
+  control?.checkpoint();
+  const backbone = buildBackbone(points, control);
+  control?.checkpoint();
+  const shortcuts = buildShortcuts(context, points, backbone, control);
   const edges = Object.freeze([...backbone, ...shortcuts]);
   return buildGeneratedRegionResult(
     context,
@@ -3784,6 +3834,7 @@ export function generateClusterRegion(request: ClusterGenerationRequest): Genera
     Object.freeze(points.map((point) => point.index)),
     points,
     edges,
+    control,
   );
 }
 

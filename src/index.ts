@@ -1,3 +1,17 @@
+import { createJourneyModel as createCoreJourneyModel } from "./model";
+import { scenarioPersistenceAdapter } from "./scenario-persistence";
+import type { JourneyModel } from "./model";
+
+/**
+ * Creates the public Journey Model with Scenario persistence installed.
+ *
+ * @returns A framework-independent model exposing compilation, generation, simulation, routing,
+ * and transactional Scenario persistence operations.
+ */
+export function createJourneyModel(): JourneyModel {
+  return createCoreJourneyModel(scenarioPersistenceAdapter);
+}
+
 export {
   kilograms,
   meters,
@@ -24,7 +38,6 @@ export type {
 } from "./quantities";
 export {
   compileScenario,
-  createJourneyModel,
   evaluateWorldlines,
   formatScenarioInspection,
   inspectScenario,
@@ -33,6 +46,8 @@ export {
   applyScenarioOverrides,
   compareScenarioOverrides,
   revertScenarioOverride,
+  createScenarioReference,
+  createScenarioSeed,
 } from "./model";
 export type {
   CompiledGate,
@@ -56,8 +71,16 @@ export type {
   OrbitalAnchorKind,
   ScenarioEntityCounts,
   ScenarioEpoch,
+  ScenarioGenerationMetadata,
+  ScenarioGenerationMetadataInput,
   ScenarioInput,
   ScenarioInspection,
+  ScenarioReference,
+  ScenarioReferenceInput,
+  ScenarioSeed,
+  ScenarioSeedInput,
+  ScenarioSeedKind,
+  SavedJourneyInput,
   ShipProfileInput,
   ShipProfileInspection,
   StableId,
@@ -83,6 +106,44 @@ export type {
   ScenarioCanonicalClaimInput,
   ScenarioUncertainty,
 } from "./model";
+export {
+  isSupportedClusterGeneratorVersion,
+  isSupportedScenarioGeneratorVersion,
+} from "./generator-versions";
+export {
+  CURRENT_SCENARIO_SCHEMA_VERSION,
+  DEFAULT_SCENARIO_GENERATOR_VERSION,
+  DEFAULT_SCENARIO_SEED,
+  LEGACY_SCENARIO_SCHEMA_VERSION,
+  SCENARIO_SCHEMA_VERSION,
+  SUPPORTED_SCENARIO_GENERATOR_VERSIONS,
+  SUPPORTED_SCENARIO_SCHEMA_VERSIONS,
+  createScenarioExport,
+  deserializeScenario,
+  exportScenario,
+  importScenario,
+  migrateScenario,
+  migrateScenarioDocument,
+  serializeScenario,
+} from "./scenario-persistence";
+export type {
+  ScenarioExportDocument,
+  ScenarioExportGate,
+  ScenarioExportGateConnection,
+  ScenarioExportOptions,
+  ScenarioExportOrbitalAnchor,
+  ScenarioExportSource,
+  ScenarioExportShipProfile,
+  ScenarioExportSystem,
+  ScenarioImportFailure,
+  ScenarioImportResult,
+  ScenarioImportSuccess,
+  ScenarioMigrationFailure,
+  ScenarioMigrationResult,
+  ScenarioMigrationSuccess,
+  ScenarioPersistenceIssue,
+  ScenarioPersistenceIssueCode,
+} from "./scenario-persistence";
 export {
   compareCanonClaim,
   compareCanonicalClaim,
@@ -245,6 +306,7 @@ export {
 } from "./minimal-scenario";
 export {
   DEFAULT_CLUSTER_GENERATOR_VERSION,
+  SUPPORTED_CLUSTER_GENERATOR_VERSIONS,
   DEFAULT_CLUSTER_MATERIALIZED_SYSTEM_COUNT,
   DEFAULT_CLUSTER_REGION_RADIUS,
   DEFAULT_CLUSTER_ROUTE_HORIZON,

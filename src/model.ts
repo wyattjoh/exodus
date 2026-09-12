@@ -26,6 +26,19 @@ import {
   materializeClusterRegion,
   planClusterRoute,
 } from "./cluster-generation";
+import { createUnavailableScenarioPersistence } from "./scenario-persistence-adapter";
+import type {
+  ScenarioExportDocument,
+  ScenarioExportOptions,
+  ScenarioExportSource,
+  ScenarioImportResult,
+  ScenarioMigrationResult,
+} from "./scenario-persistence";
+import type { ScenarioPersistenceAdapter } from "./scenario-persistence-adapter";
+import {
+  isSupportedScenarioGeneratorVersion,
+  SUPPORTED_SCENARIO_GENERATOR_VERSIONS,
+} from "./generator-versions";
 import type {
   ClusterGenerationRequest,
   ClusterRegionMaterializationRequest,
@@ -44,6 +57,7 @@ import type {
   MultiLegJourneySimulationResult,
 } from "./simulation";
 import {
+  createCitation,
   createDisplayPrecision,
   createPropertyMetadata,
   createProvenance,
@@ -52,6 +66,9 @@ import {
   type CanonicalClaim,
   type CanonicalIdentity,
   type CanonicalIdentityInput,
+  type Citation,
+  type CitationAuthority,
+  type CitationInput,
   type ConservativeBounds,
   type DisplayPrecision,
   type PropertyMetadata,
@@ -64,6 +81,8 @@ import {
 } from "./provenance";
 
 const stableIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const trustedCompiledScenarios = new WeakSet<object>();
+const trustedCompiledScenarioIndexOwners = new WeakMap<object, CompiledScenario>();
 
 /**
  * A stable identifier for a compiled domain entity.
@@ -156,6 +175,92 @@ export type ScenarioEpoch = {
   readonly label: string;
   readonly coordinateTime: Seconds;
 };
+
+/**
+ * The two seed types supported by deterministic Cluster generation.
+ */
+export type ScenarioSeedKind = "number" | "string";
+
+/**
+ * A normalized, typed seed identity retained by a Scenario export.
+ */
+export type ScenarioSeed = {
+  readonly kind: ScenarioSeedKind;
+  readonly type: ScenarioSeedKind;
+  readonly value: string | number;
+  readonly text: string;
+  readonly identity: string;
+};
+
+/**
+ * A seed accepted at the Scenario and persistence seams.
+ */
+export type ScenarioSeedInput =
+  | string
+  | number
+  | {
+      readonly kind?: ScenarioSeedKind | undefined;
+      readonly type?: ScenarioSeedKind | undefined;
+      readonly value?: string | number | undefined;
+      readonly text?: string | undefined;
+      readonly identity?: string | undefined;
+    };
+
+/**
+ * Generation metadata that makes a procedural Scenario reproducible.
+ */
+export type ScenarioGenerationMetadata = {
+  readonly generatorVersion: string;
+  readonly seed: ScenarioSeed;
+  readonly logicalPopulation: number;
+};
+
+/**
+ * Generation metadata accepted while constructing a Scenario.
+ */
+export type ScenarioGenerationMetadataInput = {
+  readonly generatorVersion: string;
+  readonly seed: ScenarioSeedInput;
+  readonly logicalPopulation: number;
+};
+
+/**
+ * A source reference retained independently from property-level Provenance.
+ */
+export type ScenarioReferenceInput = {
+  readonly id: string;
+  readonly source?: string | undefined;
+  readonly locator?: string | undefined;
+  readonly title?: string | undefined;
+  readonly url?: string | undefined;
+  readonly authority?: CitationAuthority | undefined;
+  readonly citation?: CitationInput | Citation | undefined;
+  readonly citations?: readonly (CitationInput | Citation)[] | undefined;
+  readonly note?: string | undefined;
+};
+
+/**
+ * A normalized, immutable Scenario source reference.
+ */
+export type ScenarioReference = {
+  readonly id: StableId;
+  readonly source: string;
+  readonly locator: string;
+  readonly title: string | undefined;
+  readonly url: string | undefined;
+  readonly authority: CitationAuthority;
+  readonly citation: Citation;
+  readonly citations: readonly Citation[];
+  readonly note: string | undefined;
+};
+
+/**
+ * A JSON-friendly saved input for simulation or route planning.
+ *
+ * The runtime persistence seam validates and snapshots the record without replacing the existing
+ * Journey and Route request types.
+ */
+export type SavedJourneyInput = Readonly<Record<string, unknown>>;
 
 /**
  * Provenance metadata accepted on an entity while retaining the legacy raw-property input shape.
@@ -289,8 +394,15 @@ export type ScenarioInput = {
   readonly gates: readonly GateInput[];
   readonly gateConnections: readonly GateConnectionInput[];
   readonly shipProfiles: readonly ShipProfileInput[];
+  readonly generatorVersion?: string | undefined;
+  readonly seed?: ScenarioSeedInput | undefined;
+  readonly logicalPopulation?: number | undefined;
+  readonly generation?: ScenarioGenerationMetadataInput | undefined;
+  readonly references?: readonly ScenarioReferenceInput[] | undefined;
   readonly canonicalClaims?: readonly ScenarioCanonicalClaimInput[] | undefined;
   readonly overrides?: readonly ScenarioOverrideLayerInput[] | undefined;
+  readonly journeyInputs?: readonly SavedJourneyInput[] | undefined;
+  readonly savedJourneyInputs?: readonly SavedJourneyInput[] | undefined;
 } & EntityProvenanceInput;
 
 /**
@@ -386,6 +498,13 @@ export type CompiledScenario = {
   readonly gates: readonly CompiledGate[];
   readonly gateConnections: readonly CompiledGateConnection[];
   readonly shipProfiles: readonly CompiledShipProfile[];
+  readonly generatorVersion: string | undefined;
+  readonly seed: ScenarioSeed | undefined;
+  readonly logicalPopulation: number | undefined;
+  readonly generation: ScenarioGenerationMetadata | undefined;
+  readonly references: readonly ScenarioReference[];
+  readonly journeyInputs: readonly SavedJourneyInput[];
+  readonly savedJourneyInputs: readonly SavedJourneyInput[];
   readonly canonicalIdentity: CanonicalIdentity;
   readonly provenance: Provenance;
   readonly properties: Readonly<Record<string, PropertyMetadata<unknown>>>;
@@ -414,7 +533,10 @@ export type ValidationIssueCode =
   | "invalid-citation"
   | "invalid-claim"
   | "invalid-precision"
-  | "invalid-override";
+  | "invalid-override"
+  | "invalid-generation-metadata"
+  | "unsupported-generator-version"
+  | "invalid-reference";
 
 /**
  * A structured explanation of one invalid Scenario input.
@@ -668,9 +790,188 @@ export type JourneyModel = {
     scenario: CompiledScenario,
     layerId: string,
   ) => CompiledScenario;
+  readonly createScenarioExport: (
+    source: ScenarioExportSource,
+    options?: ScenarioExportOptions,
+  ) => ScenarioExportDocument;
+  readonly serializeScenario: (
+    source: ScenarioExportSource,
+    options?: ScenarioExportOptions,
+  ) => string;
+  readonly exportScenario: (
+    source: ScenarioExportSource,
+    options?: ScenarioExportOptions,
+  ) => string;
+  readonly importScenario: (input: unknown) => ScenarioImportResult;
+  readonly migrateScenario: (input: unknown) => ScenarioMigrationResult;
 };
 
 type RecordValue = Record<string, unknown>;
+
+/**
+ * Normalizes a numeric or textual seed while preserving its type, exact text, and deterministic
+ * identity. The object form is intentionally strict so imported JSON cannot silently coerce a
+ * number into a string or accept a mismatched identity.
+ *
+ * @param input - A safe integer, exact string, or fully/partially described seed descriptor.
+ * @returns An immutable normalized seed descriptor.
+ * @throws RangeError when the seed is unsafe, empty, or internally inconsistent.
+ */
+export function createScenarioSeed(input: ScenarioSeedInput): ScenarioSeed {
+  if (typeof input === "number") {
+    if (!Number.isSafeInteger(input)) {
+      throw new RangeError("Scenario numeric seeds must be safe integers.");
+    }
+    const text = String(input);
+    return Object.freeze({
+      kind: "number" as const,
+      type: "number" as const,
+      value: input,
+      text,
+      identity: `number:${text}`,
+    });
+  }
+  if (typeof input === "string") {
+    if (!isNonEmptyString(input)) {
+      throw new RangeError("Scenario string seeds must be non-empty.");
+    }
+    return Object.freeze({
+      kind: "string" as const,
+      type: "string" as const,
+      value: input,
+      text: input,
+      identity: `string:${input.length}:${input}`,
+    });
+  }
+  if (!isRecord(input)) {
+    throw new RangeError("Scenario seed must be a string, safe integer, or descriptor object.");
+  }
+
+  const descriptorKind = input.kind ?? input.type;
+  const valueKind = typeof input.value === "number" ? "number" : "string";
+  const kind = descriptorKind ?? (typeof input.value === "number" ? "number" : "string");
+  if (descriptorKind !== undefined && descriptorKind !== "number" && descriptorKind !== "string") {
+    throw new RangeError("Scenario seed descriptor kind must be number or string.");
+  }
+  if (input.kind !== undefined && input.type !== undefined && input.kind !== input.type) {
+    throw new RangeError("Scenario seed descriptor kind and type must agree.");
+  }
+  if (kind === "number") {
+    if (typeof input.value !== "number" || !Number.isSafeInteger(input.value)) {
+      throw new RangeError("Numeric Scenario seed descriptors require a safe integer value.");
+    }
+    if (valueKind !== "number") {
+      throw new RangeError("Numeric Scenario seed descriptors cannot use string values.");
+    }
+    const text = input.text ?? String(input.value);
+    const identity = `number:${text}`;
+    if (
+      text !== String(input.value) ||
+      (input.identity !== undefined && input.identity !== identity)
+    ) {
+      throw new RangeError("Scenario numeric seed text and identity do not match its value.");
+    }
+    return Object.freeze({
+      kind: "number" as const,
+      type: "number" as const,
+      value: input.value,
+      text,
+      identity,
+    });
+  }
+
+  const text = input.text ?? (typeof input.value === "string" ? input.value : undefined);
+  if (text === undefined || !isNonEmptyString(text)) {
+    throw new RangeError("String Scenario seed descriptors require non-empty text.");
+  }
+  if (input.value !== undefined && input.value !== text) {
+    throw new RangeError("Scenario string seed value and text must be identical.");
+  }
+  const identity = `string:${text.length}:${text}`;
+  if (input.identity !== undefined && input.identity !== identity) {
+    throw new RangeError("Scenario string seed identity does not match its exact text.");
+  }
+  return Object.freeze({
+    kind: "string" as const,
+    type: "string" as const,
+    value: text,
+    text,
+    identity,
+  });
+}
+
+/**
+ * Normalizes one source reference and all of its citations into an immutable record.
+ *
+ * @param input - Flat or nested citation fields with a stable reference identifier.
+ * @returns An immutable normalized Scenario reference.
+ * @throws RangeError when the identifier or citation data is invalid.
+ */
+export function createScenarioReference(input: ScenarioReferenceInput): ScenarioReference {
+  if (!isRecord(input) || !isNonEmptyString(input.id) || !stableIdentifierPattern.test(input.id)) {
+    throw new RangeError("Scenario references require a stable id.");
+  }
+
+  const citationInputs: (CitationInput | Citation)[] = [];
+  if (
+    isNonEmptyString(input.source) &&
+    isNonEmptyString(input.locator) &&
+    (input.authority !== undefined ||
+      (input.citation === undefined && input.citations === undefined))
+  ) {
+    citationInputs.push({
+      source: input.source,
+      locator: input.locator,
+      title: input.title,
+      url: input.url,
+      authority: input.authority,
+    });
+  }
+  if (input.citation !== undefined) {
+    citationInputs.push(input.citation);
+  }
+  if (input.citations !== undefined) {
+    if (!Array.isArray(input.citations)) {
+      throw new RangeError(`Scenario reference ${input.id} citations must be an array.`);
+    }
+    citationInputs.push(...input.citations);
+  }
+  if (citationInputs.length === 0) {
+    throw new RangeError(`Scenario reference ${input.id} requires source and locator.`);
+  }
+
+  const citations = deduplicateScenarioCitations(
+    citationInputs.map((citation) => createCitation(citation)),
+  );
+  const citation = citations[0];
+  if (citation === undefined) {
+    throw new RangeError(`Scenario reference ${input.id} requires at least one citation.`);
+  }
+  return Object.freeze({
+    id: input.id as StableId,
+    source: citation.source,
+    locator: citation.locator,
+    title: citation.title,
+    url: citation.url,
+    authority: citation.authority,
+    citation,
+    citations: Object.freeze(citations),
+    note: input.note === undefined ? undefined : requireOptionalText(input.note, "note"),
+  });
+}
+
+function deduplicateScenarioCitations(citations: readonly Citation[]): Citation[] {
+  const seen = new Set<string>();
+  const result: Citation[] = [];
+  for (const citation of citations) {
+    const key = `${citation.authority}\u0000${citation.source}\u0000${citation.locator}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(citation);
+    }
+  }
+  return result;
+}
 
 type ParsedEntity = {
   readonly id: StableId;
@@ -683,6 +984,17 @@ function isRecord(value: unknown): value is RecordValue {
 
 function hasOwn(record: RecordValue, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function requireOptionalText(value: unknown, field: string): string {
+  if (!isNonEmptyString(value)) {
+    throw new RangeError(`${field} must be a non-empty string when supplied.`);
+  }
+  return value;
 }
 
 function asStableId(value: string): StableId {
@@ -1280,6 +1592,396 @@ function readEpoch(record: RecordValue, issues: ValidationIssue[]): ScenarioEpoc
   return Object.freeze({ label, coordinateTime });
 }
 
+function readScenarioGeneration(
+  record: RecordValue,
+  issues: ValidationIssue[],
+): ScenarioGenerationMetadata | undefined {
+  const rawGeneration = record.generation;
+  let generation: RecordValue | undefined;
+  if (rawGeneration !== undefined) {
+    if (!isRecord(rawGeneration)) {
+      addIssue(
+        issues,
+        "invalid-generation-metadata",
+        "generation",
+        "generation must be an object.",
+        "scenario",
+        undefined,
+        undefined,
+      );
+    } else {
+      generation = rawGeneration;
+    }
+  }
+
+  const propertyVersion = rawPropertyValue(record, "generatorVersion");
+  const propertySeed = rawPropertyValue(record, "generationSeed");
+  const propertyPopulation = rawPropertyValue(record, "logicalPopulation");
+  const generatorVersion =
+    record.generatorVersion ?? generation?.generatorVersion ?? propertyVersion;
+  const seed = record.seed ?? generation?.seed ?? propertySeed;
+  const logicalPopulation =
+    record.logicalPopulation ?? generation?.logicalPopulation ?? propertyPopulation;
+  const hasMetadata =
+    record.generatorVersion !== undefined ||
+    record.seed !== undefined ||
+    record.logicalPopulation !== undefined ||
+    generation !== undefined ||
+    propertyVersion !== undefined ||
+    propertySeed !== undefined ||
+    propertyPopulation !== undefined;
+  if (!hasMetadata) {
+    return undefined;
+  }
+
+  validateGenerationAliases(
+    [
+      { path: "generatorVersion", value: record.generatorVersion },
+      { path: "generation.generatorVersion", value: generation?.generatorVersion },
+      { path: "properties.generatorVersion", value: propertyVersion },
+    ],
+    "generatorVersion",
+    issues,
+    (value) => (typeof value === "string" ? value.trim() : value),
+  );
+  validateGenerationAliases(
+    [
+      { path: "logicalPopulation", value: record.logicalPopulation },
+      { path: "generation.logicalPopulation", value: generation?.logicalPopulation },
+      { path: "properties.logicalPopulation", value: propertyPopulation },
+    ],
+    "logicalPopulation",
+    issues,
+    (value) => value,
+  );
+  validateGenerationAliases(
+    [
+      { path: "seed", value: record.seed },
+      { path: "generation.seed", value: generation?.seed },
+      { path: "properties.generationSeed", value: propertySeed },
+    ],
+    "seed",
+    issues,
+    (value) => {
+      try {
+        return createScenarioSeed(value as ScenarioSeedInput).identity;
+      } catch {
+        return undefined;
+      }
+    },
+  );
+
+  if (typeof generatorVersion !== "string" || generatorVersion.trim().length === 0) {
+    addIssue(
+      issues,
+      "invalid-generation-metadata",
+      "generatorVersion",
+      "generatorVersion must be a non-empty string.",
+      "scenario",
+      undefined,
+      undefined,
+    );
+  } else if (!isSupportedScenarioGeneratorVersion(generatorVersion.trim())) {
+    addIssue(
+      issues,
+      "unsupported-generator-version",
+      "generatorVersion",
+      `generatorVersion ${JSON.stringify(generatorVersion.trim())} is unavailable; supported metadata versions are ${SUPPORTED_SCENARIO_GENERATOR_VERSIONS.join(", ")}.`,
+      "scenario",
+      undefined,
+      undefined,
+    );
+  }
+  if (typeof logicalPopulation !== "number" || !Number.isSafeInteger(logicalPopulation)) {
+    addIssue(
+      issues,
+      "invalid-generation-metadata",
+      "logicalPopulation",
+      "logicalPopulation must be a safe integer of at least two.",
+      "scenario",
+      undefined,
+      undefined,
+    );
+  } else if (logicalPopulation < 2) {
+    addIssue(
+      issues,
+      "invalid-generation-metadata",
+      "logicalPopulation",
+      "logicalPopulation must be a safe integer of at least two.",
+      "scenario",
+      undefined,
+      undefined,
+    );
+  }
+
+  let normalizedSeed: ScenarioSeed | undefined;
+  try {
+    if (seed === undefined) {
+      throw new RangeError("seed is required when generation metadata is supplied.");
+    }
+    normalizedSeed = createScenarioSeed(seed as ScenarioSeedInput);
+  } catch (error) {
+    addIssue(
+      issues,
+      "invalid-generation-metadata",
+      "seed",
+      error instanceof Error ? error.message : "seed is invalid.",
+      "scenario",
+      undefined,
+      undefined,
+    );
+  }
+  if (
+    typeof generatorVersion !== "string" ||
+    generatorVersion.trim().length === 0 ||
+    normalizedSeed === undefined ||
+    typeof logicalPopulation !== "number" ||
+    !Number.isSafeInteger(logicalPopulation) ||
+    logicalPopulation < 2
+  ) {
+    return undefined;
+  }
+  return Object.freeze({
+    generatorVersion: generatorVersion.trim(),
+    seed: normalizedSeed,
+    logicalPopulation,
+  });
+}
+
+function validateGenerationAliases(
+  values: readonly { readonly path: string; readonly value: unknown }[],
+  field: "generatorVersion" | "logicalPopulation" | "seed",
+  issues: ValidationIssue[],
+  normalize: (value: unknown) => unknown,
+): void {
+  const supplied = values.filter(({ value }) => value !== undefined);
+  const first = supplied[0];
+  if (first === undefined || supplied.length < 2) {
+    return;
+  }
+  let normalizedFirst: unknown;
+  try {
+    normalizedFirst = normalize(first.value);
+  } catch {
+    return;
+  }
+  for (const alias of supplied.slice(1)) {
+    let normalized: unknown;
+    try {
+      normalized = normalize(alias.value);
+    } catch {
+      return;
+    }
+    if (normalizedFirst === undefined || normalized === undefined) {
+      return;
+    }
+    if (Object.is(normalizedFirst, normalized) || deepEqual(normalizedFirst, normalized)) {
+      continue;
+    }
+    addIssue(
+      issues,
+      "invalid-generation-metadata",
+      field,
+      `${first.path} must agree with ${alias.path}.`,
+      "scenario",
+      undefined,
+      undefined,
+    );
+  }
+}
+
+function compileScenarioReferences(
+  record: RecordValue,
+  issues: ValidationIssue[],
+): readonly ScenarioReference[] {
+  const rawCanonicalReferences = record.references;
+  const rawSourceReferences = record.sourceReferences;
+  if (
+    rawCanonicalReferences !== undefined &&
+    rawSourceReferences !== undefined &&
+    !deepEqual(rawCanonicalReferences, rawSourceReferences)
+  ) {
+    addIssue(
+      issues,
+      "invalid-reference",
+      "references",
+      "references and sourceReferences must agree when both are supplied.",
+      "scenario",
+      undefined,
+      undefined,
+    );
+  }
+  const rawReferences =
+    rawCanonicalReferences !== undefined ? rawCanonicalReferences : rawSourceReferences;
+  if (rawReferences === undefined) {
+    return Object.freeze([]);
+  }
+  if (!Array.isArray(rawReferences)) {
+    addIssue(
+      issues,
+      "invalid-reference",
+      "references",
+      "references must be an array.",
+      "scenario",
+      undefined,
+      undefined,
+    );
+    return Object.freeze([]);
+  }
+  const references: ScenarioReference[] = [];
+  const seenReferenceIds = new Set<string>();
+  for (const [index, rawReference] of rawReferences.entries()) {
+    try {
+      const reference = createScenarioReference(rawReference as ScenarioReferenceInput);
+      if (seenReferenceIds.has(reference.id)) {
+        addIssue(
+          issues,
+          "duplicate-id",
+          `references[${index}].id`,
+          `Scenario reference id ${reference.id} is duplicated.`,
+          "scenario",
+          reference.id,
+          undefined,
+        );
+        continue;
+      }
+      seenReferenceIds.add(reference.id);
+      references.push(reference);
+    } catch (error) {
+      addIssue(
+        issues,
+        "invalid-reference",
+        `references[${index}]`,
+        error instanceof Error ? error.message : `references[${index}] is invalid.`,
+        "scenario",
+        undefined,
+        undefined,
+      );
+    }
+  }
+  return Object.freeze(references.sort((left, right) => left.id.localeCompare(right.id)));
+}
+
+function snapshotSavedJourneyValue(
+  value: unknown,
+  path: string,
+  seen: WeakSet<object> = new WeakSet<object>(),
+): unknown {
+  if (
+    value === undefined ||
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new RangeError(`${path} must contain only finite numbers.`);
+    }
+    return value;
+  }
+  if (typeof value !== "object") {
+    throw new RangeError(`${path} must contain only JSON-compatible values.`);
+  }
+  const objectValue = value as object;
+  if (seen.has(objectValue)) {
+    throw new RangeError(`${path} must not contain cyclic values.`);
+  }
+  seen.add(objectValue);
+  if (Array.isArray(value)) {
+    const copy = value.map((child, index) =>
+      snapshotSavedJourneyValue(child, `${path}[${index}]`, seen),
+    );
+    seen.delete(objectValue);
+    return Object.freeze(copy);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new RangeError(`${path} must contain plain JSON objects.`);
+  }
+  const copy = Object.create(null) as Record<string, unknown>;
+  for (const key of Object.keys(value as Record<string, unknown>)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      throw new RangeError(`${path}.${key} is not allowed in saved JSON.`);
+    }
+    copy[key] = snapshotSavedJourneyValue(
+      (value as Record<string, unknown>)[key],
+      `${path}.${key}`,
+      seen,
+    );
+  }
+  seen.delete(objectValue);
+  return Object.freeze(copy);
+}
+
+function compileScenarioJourneyInputs(
+  record: RecordValue,
+  issues: ValidationIssue[],
+): readonly SavedJourneyInput[] {
+  const journeyInputs = record.journeyInputs;
+  const savedJourneyInputs = record.savedJourneyInputs;
+  if (journeyInputs !== undefined && savedJourneyInputs !== undefined) {
+    try {
+      const journeySnapshot = snapshotSavedJourneyValue(journeyInputs, "journeyInputs");
+      const savedJourneySnapshot = snapshotSavedJourneyValue(
+        savedJourneyInputs,
+        "savedJourneyInputs",
+      );
+      if (!deepEqual(journeySnapshot, savedJourneySnapshot)) {
+        addIssue(
+          issues,
+          "invalid-structure",
+          "journeyInputs",
+          "journeyInputs and savedJourneyInputs must agree when both are supplied.",
+          "scenario",
+          undefined,
+          undefined,
+        );
+      }
+    } catch {
+      // The selected alias receives the detailed structural issue below.
+    }
+  }
+  const rawInputs = journeyInputs !== undefined ? journeyInputs : savedJourneyInputs;
+  if (rawInputs === undefined) {
+    return Object.freeze([]);
+  }
+  if (!Array.isArray(rawInputs)) {
+    addIssue(
+      issues,
+      "invalid-structure",
+      "journeyInputs",
+      "journeyInputs must be an array.",
+      "scenario",
+      undefined,
+      undefined,
+    );
+    return Object.freeze([]);
+  }
+  const inputs: SavedJourneyInput[] = [];
+  for (const [index, rawInput] of rawInputs.entries()) {
+    try {
+      const snapshot = snapshotSavedJourneyValue(rawInput, `journeyInputs[${index}]`);
+      if (!isRecord(snapshot)) {
+        throw new RangeError(`journeyInputs[${index}] must be an object.`);
+      }
+      inputs.push(snapshot as SavedJourneyInput);
+    } catch (error) {
+      addIssue(
+        issues,
+        "invalid-structure",
+        `journeyInputs[${index}]`,
+        error instanceof Error ? error.message : `journeyInputs[${index}] is invalid.`,
+        "scenario",
+        undefined,
+        undefined,
+      );
+    }
+  }
+  return Object.freeze(inputs);
+}
+
 function registerId(
   id: string | undefined,
   path: string,
@@ -1321,7 +2023,7 @@ function createEntityIndex<Entity extends { readonly id: StableId }>(
   values: readonly Entity[],
 ): ReadonlyEntityIndex<Entity> {
   const entities = new Map(values.map((entity) => [entity.id, entity]));
-  return Object.freeze({
+  const index = Object.freeze({
     get: (id: StableId): Entity | undefined => entities.get(id),
     has: (id: StableId): boolean => entities.has(id),
     keys: (): IterableIterator<StableId> => entities.keys(),
@@ -1329,6 +2031,7 @@ function createEntityIndex<Entity extends { readonly id: StableId }>(
     entries: (): IterableIterator<[StableId, Entity]> => entities.entries(),
     size: entities.size,
   });
+  return index;
 }
 
 function issueComparator(left: ValidationIssue, right: ValidationIssue): number {
@@ -1396,14 +2099,14 @@ function metadataRecord(
 function rawPropertyMetadata(record: RecordValue, property: string): RecordValue | undefined {
   const properties = metadataRecord(record, "properties");
   const propertyProvenance = metadataRecord(record, "propertyProvenance");
-  const value = properties[property] ?? propertyProvenance[property];
+  const value = hasOwn(properties, property) ? properties[property] : propertyProvenance[property];
   return isRecord(value) ? value : undefined;
 }
 
 function rawPropertyValue(record: RecordValue, property: string): unknown {
   const metadata = rawPropertyMetadata(record, property);
   if (metadata !== undefined) {
-    const rawClaim = metadata.claim ?? metadata.canonicalClaim;
+    const rawClaim = hasOwn(metadata, "claim") ? metadata.claim : metadata.canonicalClaim;
     if (isRecord(rawClaim)) {
       if (rawClaim.kind === "exact" && hasOwn(rawClaim, "value")) {
         return rawClaim.value;
@@ -1478,6 +2181,7 @@ function normalizeEntityProvenance(
   path: string,
   issues: ValidationIssue[],
 ): CompiledEntityProvenance {
+  validateEntityMetadataConsistency(record, entityType, entityId, propertyNames, path, issues);
   let entityProvenance = DEFAULT_PROVENANCE;
   if (record.provenance !== undefined) {
     try {
@@ -1597,6 +2301,157 @@ function normalizeEntityProvenance(
   });
 }
 
+function validateEntityMetadataConsistency(
+  record: RecordValue,
+  entityType: DomainEntityType,
+  entityId: StableId,
+  propertyNames: readonly string[],
+  path: string,
+  issues: ValidationIssue[],
+): void {
+  const properties = record.properties;
+  const propertyProvenance = record.propertyProvenance;
+  if (properties !== undefined && !isRecord(properties)) {
+    addIssue(
+      issues,
+      "invalid-provenance",
+      `${path}.properties`,
+      `${path}.properties must be an object when supplied.`,
+      entityType,
+      entityId,
+      undefined,
+    );
+  }
+  if (propertyProvenance !== undefined && !isRecord(propertyProvenance)) {
+    addIssue(
+      issues,
+      "invalid-provenance",
+      `${path}.propertyProvenance`,
+      `${path}.propertyProvenance must be an object when supplied.`,
+      entityType,
+      entityId,
+      undefined,
+    );
+  }
+  if (
+    isRecord(properties) &&
+    isRecord(propertyProvenance) &&
+    !deepEqual(properties, propertyProvenance)
+  ) {
+    addIssue(
+      issues,
+      "invalid-provenance",
+      `${path}.propertyProvenance`,
+      `${path}.properties and ${path}.propertyProvenance must be equal when both are supplied.`,
+      entityType,
+      entityId,
+      undefined,
+    );
+  }
+
+  const metadataProperties = new Set(propertyNames);
+  if (isRecord(properties)) {
+    for (const property of Object.keys(properties)) {
+      metadataProperties.add(property);
+    }
+  }
+  if (isRecord(propertyProvenance)) {
+    for (const property of Object.keys(propertyProvenance)) {
+      metadataProperties.add(property);
+    }
+  }
+  for (const property of metadataProperties) {
+    const propertiesMetadata = isRecord(properties) ? properties[property] : undefined;
+    const provenanceMetadata = isRecord(propertyProvenance)
+      ? propertyProvenance[property]
+      : undefined;
+    validatePropertyMetadataAliases(
+      propertiesMetadata,
+      provenanceMetadata,
+      `${path}.properties.${property}`,
+      entityType,
+      entityId,
+      issues,
+    );
+    if (!hasOwn(record, property)) {
+      continue;
+    }
+    const metadata = rawPropertyMetadata(record, property);
+    if (metadata === undefined) {
+      continue;
+    }
+    const selectedValue = rawPropertyValue(record, property);
+    const directValue = record[property];
+    if (
+      selectedValue === undefined ||
+      directValue === undefined ||
+      deepEqual(selectedValue, directValue)
+    ) {
+      continue;
+    }
+    addIssue(
+      issues,
+      "invalid-provenance",
+      `${path}.${property}`,
+      `${path}.${property} must agree with its property metadata value.`,
+      entityType,
+      entityId,
+      undefined,
+    );
+  }
+}
+
+function validatePropertyMetadataAliases(
+  propertiesMetadata: unknown,
+  provenanceMetadata: unknown,
+  path: string,
+  entityType: DomainEntityType,
+  entityId: StableId,
+  issues: ValidationIssue[],
+): void {
+  const records = [propertiesMetadata, provenanceMetadata].filter(isRecord);
+  for (const metadata of records) {
+    for (const [first, second] of [
+      ["claim", "canonicalClaim"],
+      ["bounds", "uncertainty"],
+    ] as const) {
+      if (
+        hasOwn(metadata, first) &&
+        hasOwn(metadata, second) &&
+        !deepEqual(metadata[first], metadata[second])
+      ) {
+        addIssue(
+          issues,
+          "invalid-provenance",
+          path,
+          `${path}.${first} and ${path}.${second} must agree when both are supplied.`,
+          entityType,
+          entityId,
+          undefined,
+        );
+      }
+    }
+    const values = ["selectedNominal", "nominal", "value"].filter((key) => hasOwn(metadata, key));
+    const firstValue = values[0];
+    if (firstValue !== undefined) {
+      for (const key of values.slice(1)) {
+        if (deepEqual(metadata[firstValue], metadata[key])) {
+          continue;
+        }
+        addIssue(
+          issues,
+          "invalid-provenance",
+          path,
+          `${path} value aliases must agree when both are supplied.`,
+          entityType,
+          entityId,
+          undefined,
+        );
+      }
+    }
+  }
+}
+
 function readIdentityText(value: unknown, path: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new RangeError(`${path} must be a non-empty string.`);
@@ -1608,7 +2463,24 @@ function compileScenarioOverrides(
   record: RecordValue,
   issues: ValidationIssue[],
 ): readonly ScenarioOverrideLayer[] {
-  const rawOverrides = record.overrides;
+  const overrides = record.overrides;
+  const overrideLayers = record.overrideLayers;
+  if (
+    overrides !== undefined &&
+    overrideLayers !== undefined &&
+    !deepEqual(overrides, overrideLayers)
+  ) {
+    addIssue(
+      issues,
+      "invalid-override",
+      "overrides",
+      "overrides and overrideLayers must agree when both are supplied.",
+      "scenario",
+      undefined,
+      undefined,
+    );
+  }
+  const rawOverrides = overrides !== undefined ? overrides : overrideLayers;
   if (rawOverrides === undefined) {
     return [];
   }
@@ -1664,6 +2536,7 @@ function compileScenarioClaims(
     return [];
   }
   const claims: ScenarioCanonicalClaim[] = [];
+  const seenClaimIds = new Set<string>();
   for (const [index, rawClaim] of rawClaims.entries()) {
     const path = `canonicalClaims[${index}]`;
     if (!isRecord(rawClaim)) {
@@ -1700,6 +2573,19 @@ function compileScenarioClaims(
       );
       continue;
     }
+    if (seenClaimIds.has(id)) {
+      addIssue(
+        issues,
+        "duplicate-id",
+        `${path}.id`,
+        `Canonical Claim id ${id} is duplicated.`,
+        "scenario",
+        id,
+        undefined,
+      );
+      continue;
+    }
+    seenClaimIds.add(id);
     try {
       const metadata = createPropertyMetadata(property, undefined, {
         claim: rawClaim.claim as Record<string, unknown>,
@@ -2173,6 +3059,58 @@ function validateGateConnections(
 }
 
 /**
+ * Returns whether a value was produced by this module's validated Scenario compilation pipeline.
+ *
+ * The trust marker is module-private and cannot be recreated by matching the CompiledScenario
+ * object shape. Persistence uses this predicate to keep untrusted values on its safe snapshot
+ * path, including objects that merely resemble compiled Scenarios. Cloned or spread compiled
+ * objects intentionally lose the marker and must be revalidated before persistence.
+ *
+ * @param value - The candidate Scenario value.
+ * @returns True only for a Scenario registered by successful compilation or a trusted derivation.
+ */
+export function isTrustedCompiledScenario(value: unknown): value is CompiledScenario {
+  return typeof value === "object" && value !== null && trustedCompiledScenarios.has(value);
+}
+
+/**
+ * Returns whether a value is an immutable lookup index created for a compiled Scenario.
+ *
+ * The index contains internal lookup functions and is therefore not part of the raw JSON input
+ * graph. Persistence may use an index carrying this private marker only after resolving its exact
+ * owning Scenario and proving an exact shallow-copy representation.
+ *
+ * @param value - The candidate index value.
+ * @returns True only for an index created by this module.
+ */
+export function isTrustedCompiledScenarioIndex(value: unknown): value is CompiledScenarioIndex {
+  return (
+    typeof value === "object" && value !== null && trustedCompiledScenarioIndexOwners.has(value)
+  );
+}
+
+/**
+ * Resolves a trusted compiled index to the exact Scenario that owns it.
+ *
+ * The owner binding is module-private and is populated only after a successful compilation or
+ * trusted immutable derivation. A trusted index copied from another Scenario therefore cannot
+ * authorize a different parent object at the persistence boundary.
+ *
+ * @param value - The candidate compiled index.
+ * @returns The exact owning Scenario, or undefined for an unbound value.
+ */
+export function getTrustedCompiledScenarioIndexOwner(value: unknown): CompiledScenario | undefined {
+  if (!isTrustedCompiledScenarioIndex(value)) {
+    return undefined;
+  }
+  return trustedCompiledScenarioIndexOwners.get(value);
+}
+
+function bindTrustedCompiledScenarioIndexOwner(scenario: CompiledScenario): void {
+  trustedCompiledScenarioIndexOwners.set(scenario.index, scenario);
+}
+
+/**
  * Compiles and validates an unknown Scenario value at the Journey Model seam.
  *
  * Validation is structural and reference-aware: malformed quantities, duplicate identifiers,
@@ -2215,6 +3153,9 @@ export function compileScenario(input: unknown): CompileScenarioResult {
     scenarioIdValue,
   );
   const epoch = readEpoch({ ...input, epoch: rawPropertyValue(input, "epoch") }, issues);
+  const generation = readScenarioGeneration(input, issues);
+  const references = compileScenarioReferences(input, issues);
+  const journeyInputs = compileScenarioJourneyInputs(input, issues);
   const seenIds = new Map<string, ParsedEntity>();
   const scenarioId = registerId(scenarioIdValue, "id", "scenario", seenIds, issues);
 
@@ -2798,6 +3739,13 @@ export function compileScenario(input: unknown): CompileScenarioResult {
     gates: immutableGates,
     gateConnections: immutableConnections,
     shipProfiles: immutableShipProfiles,
+    generatorVersion: generation?.generatorVersion,
+    seed: generation?.seed,
+    logicalPopulation: generation?.logicalPopulation,
+    generation,
+    references,
+    journeyInputs,
+    savedJourneyInputs: journeyInputs,
     canonicalIdentity: scenarioMetadata.canonicalIdentity,
     provenance: scenarioMetadata.provenance,
     properties: scenarioMetadata.properties,
@@ -2832,6 +3780,10 @@ export function compileScenario(input: unknown): CompileScenarioResult {
     return failure(issues);
   }
 
+  trustedCompiledScenarios.add(compiled);
+  trustedCompiledScenarios.add(scenarioWithOverrides);
+  bindTrustedCompiledScenarioIndexOwner(compiled);
+  bindTrustedCompiledScenarioIndexOwner(scenarioWithOverrides);
   return Object.freeze({ ok: true as const, scenario: scenarioWithOverrides, issues: [] as const });
 }
 
@@ -3273,7 +4225,7 @@ function cloneCompiledScenario(
   const properties = replacements.properties ?? scenario.properties;
   const entities = [...systems, ...orbitalAnchors, ...gates, ...gateConnections, ...shipProfiles];
   const uncertainty = scenarioUncertainty(properties, entities, scenario.canonicalClaims);
-  return Object.freeze({
+  const cloned = Object.freeze({
     ...scenario,
     systems: freezeList(systems),
     orbitalAnchors: freezeList(orbitalAnchors),
@@ -3295,6 +4247,11 @@ function cloneCompiledScenario(
       shipProfiles: createEntityIndex(shipProfiles),
     }),
   });
+  if (isTrustedCompiledScenario(scenario)) {
+    trustedCompiledScenarios.add(cloned);
+    bindTrustedCompiledScenarioIndexOwner(cloned);
+  }
+  return cloned;
 }
 
 function deepEqual(left: unknown, right: unknown): boolean {
@@ -3612,9 +4569,13 @@ export function formatScenarioInspection(inspection: ScenarioInspection): string
  * The current implementation is stateless: all Scenario data is supplied to each operation and
  * all results are returned as immutable values.
  *
+ * @param persistence - Optional persistence implementation; the package entrypoint injects the
+ * canonical adapter while direct core-module imports fail closed for persistence operations.
  * @returns A Journey Model adapter exposing compilation, generation, inspection, worldline evaluation, simulation, and explicit-network route-planning operations.
  */
-export function createJourneyModel(): JourneyModel {
+export function createJourneyModel(
+  persistence: ScenarioPersistenceAdapter = createUnavailableScenarioPersistence(),
+): JourneyModel {
   return Object.freeze({
     compileScenario,
     inspectScenario,
@@ -3632,5 +4593,6 @@ export function createJourneyModel(): JourneyModel {
     applyScenarioOverrides,
     compareScenarioOverrides,
     revertScenarioOverride,
+    ...persistence,
   });
 }

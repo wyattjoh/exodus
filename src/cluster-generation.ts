@@ -36,6 +36,11 @@ import {
   type PropertyMetadataInput,
 } from "./provenance";
 import {
+  isSupportedClusterGeneratorVersion,
+  DEFAULT_CLUSTER_GENERATOR_VERSION,
+  SUPPORTED_CLUSTER_GENERATOR_VERSIONS,
+} from "./generator-versions";
+import {
   planJourney,
   type RoutePlan,
   type RoutePlanningIssue,
@@ -370,9 +375,25 @@ export type GeneratedClusterRegion = {
 };
 
 /**
+ * Returns whether a value is a generated region created by this module.
+ *
+ * The module-private marker prevents persistence from treating a forgeable generated-region shape
+ * or Proxy as trusted. Untrusted wrappers are revalidated through the raw input snapshot instead.
+ *
+ * @param value - The candidate generated-region value.
+ * @returns True only for an immutable region registered by this generator.
+ */
+export function isTrustedGeneratedClusterRegion(value: unknown): value is GeneratedClusterRegion {
+  return typeof value === "object" && value !== null && trustedGeneratedRegions.has(value);
+}
+
+/**
  * The default generator version used when a caller does not provide one.
  */
-export const DEFAULT_CLUSTER_GENERATOR_VERSION = "globular-v1";
+export {
+  DEFAULT_CLUSTER_GENERATOR_VERSION,
+  SUPPORTED_CLUSTER_GENERATOR_VERSIONS,
+} from "./generator-versions";
 
 /**
  * The default number of finite Systems materialized for a large logical population.
@@ -423,6 +444,7 @@ const ZERO_VELOCITY: VelocityVector = vector3(
 );
 const ORIGIN: PositionVector = vector3(meters(0), meters(0), meters(0));
 const stableIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const trustedGeneratedRegions = new WeakSet<object>();
 
 type RecordValue = Record<string, unknown>;
 type ScenarioEntity = RecordValue & EntityProvenanceInput;
@@ -493,6 +515,8 @@ type NormalizedBase = {
   readonly shipProfiles: readonly ScenarioEntity[];
   readonly canonicalClaims: readonly unknown[] | undefined;
   readonly overrides: readonly unknown[] | undefined;
+  readonly references: readonly unknown[] | undefined;
+  readonly journeyInputs: readonly unknown[] | undefined;
   readonly properties: RecordValue;
   readonly canonicalIdentity: unknown;
   readonly provenance: unknown;
@@ -637,11 +661,16 @@ function readRegionRadius(value: Meters | number | undefined): Meters {
 }
 
 function readGeneratorVersion(value: string | undefined): string {
-  const version = value ?? DEFAULT_CLUSTER_GENERATOR_VERSION;
+  const version = value?.trim() ?? DEFAULT_CLUSTER_GENERATOR_VERSION;
   if (!nonEmptyString(version)) {
     throw new RangeError("Cluster generatorVersion must be a non-empty string.");
   }
-  return version.trim();
+  if (!isSupportedClusterGeneratorVersion(version)) {
+    throw new RangeError(
+      `Unsupported Cluster generatorVersion ${JSON.stringify(version)}; retained versions are ${SUPPORTED_CLUSTER_GENERATOR_VERSIONS.join(", ")}.`,
+    );
+  }
+  return version;
 }
 
 function readEpoch(value: unknown): ScenarioEpoch | undefined {
@@ -922,9 +951,19 @@ function sourceScenarioRecord(value: ScenarioInput | CompiledScenario | undefine
     gates: cloneRecords(value.gates),
     gateConnections: cloneRecords(value.gateConnections),
     shipProfiles: cloneRecords(value.shipProfiles),
+    generatorVersion: value.generatorVersion,
+    seed: value.seed,
+    logicalPopulation: value.logicalPopulation,
+    generation: value.generation,
+    references: Array.isArray(value.references) ? [...value.references] : undefined,
     canonicalClaims: Array.isArray(value.canonicalClaims) ? [...value.canonicalClaims] : undefined,
     overrides:
       Array.isArray(value.overrides) && !hasOwn(value, "index") ? [...value.overrides] : undefined,
+    journeyInputs: Array.isArray(value.journeyInputs)
+      ? [...value.journeyInputs]
+      : Array.isArray(value.savedJourneyInputs)
+        ? [...value.savedJourneyInputs]
+        : undefined,
     properties: cloneRecord(value.properties),
     propertyProvenance: cloneRecord(value.propertyProvenance),
     canonicalIdentity: value.canonicalIdentity,
@@ -1213,6 +1252,12 @@ function normalizeBaseScenario(
       ? Object.freeze([...source.canonicalClaims])
       : undefined,
     overrides: Array.isArray(source.overrides) ? Object.freeze([...source.overrides]) : undefined,
+    references: Array.isArray(source.references)
+      ? Object.freeze([...source.references])
+      : undefined,
+    journeyInputs: Array.isArray(source.journeyInputs)
+      ? Object.freeze([...source.journeyInputs])
+      : undefined,
     properties: cloneRecord(source.properties),
     canonicalIdentity: source.canonicalIdentity,
     provenance: source.provenance,
@@ -2080,6 +2125,16 @@ function scenarioInputForRegion(
       ...base.connections,
       ...(records?.connections ?? []),
     ]) as readonly GateConnectionInput[],
+    generatorVersion: context.generatorVersion,
+    seed: context.seed,
+    logicalPopulation: context.logicalPopulation,
+    generation: {
+      generatorVersion: context.generatorVersion,
+      seed: context.seed,
+      logicalPopulation: context.logicalPopulation,
+    },
+    references: base.references as ScenarioInput["references"],
+    journeyInputs: base.journeyInputs as ScenarioInput["journeyInputs"],
     shipProfiles: freezeRecords(
       base.shipProfiles.length > 0
         ? [...base.shipProfiles]
@@ -2681,7 +2736,7 @@ function buildGeneratedRegionResult(
   const generatedConnections = scenario.gateConnections.filter((entity) =>
     records.generatedConnectionIds.includes(entity.id),
   );
-  return Object.freeze({
+  const region = Object.freeze({
     kind: "generated-cluster-region" as const,
     ok: true as const,
     seed: context.seed,
@@ -2726,6 +2781,8 @@ function buildGeneratedRegionResult(
     materialize: hierarchy.materialize,
     materializeRegion: hierarchy.materialize,
   });
+  trustedGeneratedRegions.add(region);
+  return region;
 }
 
 /**

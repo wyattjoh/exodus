@@ -172,3 +172,29 @@ Preserve disagreements instead of correcting the source: `compareCanonicalClaim`
 immutable ordered layers created by `createScenarioOverrideLayer`; apply them with
 `applyScenarioOverrides`, inspect changes with `compareScenarioOverrides`, and remove one with
 `revertScenarioOverride`. The original compiled Scenario remains available as the override base.
+
+## Scenario JSON persistence
+
+`exportScenario` (also `serializeScenario`) emits a compact canonical schema-v2 JSON document. It
+contains the Scenario entities, epoch, read-only source references and citations, Canonical Claims
+(including ranges and selected nominals), ordered override layers, Ship Profiles, saved
+`journeyInputs`, and reproducibility metadata: `generatorVersion`, `logicalPopulation`, and a
+typed `seed` with exact `text` and `identity`. Hand-authored Scenarios use the explicit
+`manual-v1` generator metadata and a `manual` seed when no generator metadata was supplied. The
+explicit generator registry currently retains `globular-v1` for deterministic Cluster generation
+and `manual-v1` for non-procedural Scenarios; unknown or future versions are rejected rather than
+hashed into the current algorithm.
+
+`importScenario` and `migrateScenario` accept JSON text or unknown decoded values. They snapshot
+only plain JSON objects, reject unsafe prototype keys, non-finite numbers, schema versions that
+are not explicitly supported, and invalid compiled references; failures return frozen structured
+issues and never return a partial Scenario. Schema v1 is supported as a fixed migration source,
+including its nested `generator`/`scenario` shape and `connections`, `overrideLayers`, and
+`journeys` aliases. Migration compiles the result before returning it, so provenance, citations,
+uncertainty ranges, generated IDs, and layered override order are retained.
+
+Canonical serialization sorts object keys and identifier-bearing entity, reference, and claim
+arrays. Override changes and saved Journey input arrays retain their authored order; undefined
+object properties are omitted and an absent orbital parent is represented by JSON `null`. Thus
+`exportScenario(importScenario(bytes).scenario)` and export-after-migration produce byte-stable
+JSON. The same persistence operations are available on `createJourneyModel()`.

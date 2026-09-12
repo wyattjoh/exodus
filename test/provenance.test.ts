@@ -6,6 +6,7 @@ import {
   compareScenarioOverrides,
   compileScenario,
   conservativeBounds,
+  conservativeUncertaintyWidth,
   createCanonDiscrepancy,
   createProvenance,
   derivedResult,
@@ -492,6 +493,66 @@ describe("provenance and uncertainty Journey Model seam", () => {
     expect(distanceScenario.uncertainty.absoluteSeconds).toBe(0);
     expect(timeScenario.uncertainty.absoluteSeconds).toBe(10);
     expect(timeScenario.uncertainty.relativeFactor).toBeGreaterThan(0);
+  });
+
+  test("keeps mixed-unit structured uncertainty component-wise and unit-safe", () => {
+    const provenance = generatedProvenance("mixed-unit-uncertainty@1");
+    const bounds = conservativeBounds(
+      {
+        distance: meters(100),
+        duration: seconds(10),
+        ratio: 1,
+      },
+      {
+        distance: meters(90),
+        duration: seconds(9),
+        ratio: 0.9,
+      },
+      {
+        distance: meters(110),
+        duration: seconds(11),
+        ratio: 1.1,
+      },
+    );
+    const scaledBounds = conservativeBounds(
+      {
+        distance: meters(1e13),
+        duration: seconds(1e7),
+        ratio: 1,
+      },
+      {
+        distance: meters(9e12),
+        duration: seconds(9e6),
+        ratio: 0.9,
+      },
+      {
+        distance: meters(11e12),
+        duration: seconds(11e6),
+        ratio: 1.1,
+      },
+    );
+    const width = conservativeUncertaintyWidth(bounds);
+    const scaledWidth = conservativeUncertaintyWidth(scaledBounds);
+
+    expect(width.hasUncertainty).toBe(true);
+    expect(width.absoluteSeconds).toBe(0);
+    expect(width.absolute).toBe(0);
+    expect(width.relativeFactor).toBeCloseTo(0.3, 12);
+    expect(scaledWidth.relativeFactor).toBeCloseTo(width.relativeFactor, 12);
+  });
+
+  test("keeps absolute uncertainty restricted to explicit scalar Seconds", () => {
+    const width = conservativeUncertaintyWidth(
+      conservativeBounds(seconds(20), seconds(10), seconds(30)),
+    );
+    const nonNumericWidth = conservativeUncertaintyWidth(conservativeBounds(true, false, true));
+
+    expect(width.hasUncertainty).toBe(true);
+    expect(width.absoluteSeconds).toBe(10);
+    expect(width.relativeFactor).toBeCloseTo(0.5, 12);
+    expect(nonNumericWidth.hasUncertainty).toBe(true);
+    expect(nonNumericWidth.absoluteSeconds).toBe(0);
+    expect(nonNumericWidth.relativeFactor).toBe(0);
   });
 
   test("requires sourced citation authority to match provenance kind", () => {

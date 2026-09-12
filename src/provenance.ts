@@ -103,6 +103,16 @@ export type ConservativeBounds<Value> = {
 };
 
 /**
+ * A numeric summary of the width of conservative bounds.
+ */
+export type ConservativeUncertaintyWidth = {
+  readonly hasUncertainty: boolean;
+  readonly relativeFactor: number;
+  readonly absolute: number;
+  readonly absoluteSeconds: number;
+};
+
+/**
  * The exact form of a Canonical Claim.
  *
  * @typeParam Value - The claimed value type.
@@ -782,6 +792,69 @@ export function exactBounds<Value>(
 }
 
 /**
+ * Summarizes numeric uncertainty without converting units or changing the supplied bounds.
+ *
+ * Each numeric leaf is compared with the leaf at the same structural path. Relative half-widths
+ * are dimensionless and added component-wise; unlike a Euclidean norm, this never combines meters,
+ * seconds, radians, or dimensionless values into one magnitude. `absolute` is retained only for a
+ * single numeric leaf because a structured value has no one meaningful absolute unit. The
+ * `absoluteSeconds` field is populated only for a scalar tagged-seconds range so callers can safely
+ * use it as temporal padding.
+ *
+ * Non-numeric unequal bounds still report `hasUncertainty`, but contribute no invented numeric
+ * padding.
+ *
+ * @param bounds - Conservative bounds to summarize.
+ * @returns An immutable uncertainty-width summary.
+ */
+export function conservativeUncertaintyWidth<Value>(
+  bounds: ConservativeBounds<Value>,
+): ConservativeUncertaintyWidth {
+  const lowerValues = new Map(uncertaintyNumericComponents(bounds.lower));
+  const upperValues = new Map(uncertaintyNumericComponents(bounds.upper));
+  const nominalValues = new Map(uncertaintyNumericComponents(bounds.nominal));
+  const componentWidths: number[] = [];
+  let relativeFactor = 0;
+  for (const path of [...nominalValues.keys()].sort()) {
+    const lowerValue = lowerValues.get(path);
+    const upperValue = upperValues.get(path);
+    const nominalValue = nominalValues.get(path);
+    if (lowerValue === undefined || upperValue === undefined || nominalValue === undefined) {
+      continue;
+    }
+    const halfWidth = Math.abs(upperValue - lowerValue) / 2;
+    if (!(halfWidth > 0) || !Number.isFinite(halfWidth)) {
+      continue;
+    }
+    componentWidths.push(halfWidth);
+    const componentScale =
+      Math.abs(nominalValue) > 0
+        ? Math.abs(nominalValue)
+        : Math.max(Math.abs(lowerValue), Math.abs(upperValue));
+    if (componentScale > 0 && Number.isFinite(componentScale)) {
+      const componentRelativeWidth = halfWidth / componentScale;
+      if (Number.isFinite(componentRelativeWidth)) {
+        relativeFactor += componentRelativeWidth;
+      }
+    }
+  }
+  const secondsLower = uncertaintySecondsValue(bounds.lower);
+  const secondsUpper = uncertaintySecondsValue(bounds.upper);
+  const secondsNominal = uncertaintySecondsValue(bounds.nominal);
+  const absoluteSeconds =
+    secondsLower === undefined || secondsUpper === undefined || secondsNominal === undefined
+      ? 0
+      : Math.abs(secondsUpper - secondsLower) / 2;
+  const absolute = componentWidths.length === 1 ? (componentWidths[0] ?? 0) : 0;
+  return Object.freeze({
+    hasUncertainty: !deepEqual(bounds.lower, bounds.upper),
+    relativeFactor: Number.isFinite(relativeFactor) ? Math.max(0, relativeFactor) : 0,
+    absolute: Number.isFinite(absolute) ? absolute : 0,
+    absoluteSeconds: Number.isFinite(absoluteSeconds) ? absoluteSeconds : 0,
+  });
+}
+
+/**
  * Converts a Canonical Claim into a selected property metadata record.
  *
  * @param property - The stable property name.
@@ -1266,6 +1339,38 @@ function snapshotValue<Value>(
     copy[key] = snapshotValue((value as Record<string, unknown>)[key], seen);
   }
   return Object.freeze(copy) as Value;
+}
+
+type NumericUncertaintyComponent = readonly [path: string, value: number];
+
+function uncertaintyNumericComponents(
+  value: unknown,
+  path = "$",
+): readonly NumericUncertaintyComponent[] {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return [[path, value]];
+  }
+  if (isRecord(value)) {
+    if (typeof value.value === "number" && Number.isFinite(value.value)) {
+      return [[path, value.value]];
+    }
+    return Object.keys(value)
+      .sort()
+      .flatMap((key) => uncertaintyNumericComponents(value[key], `${path}.${key}`));
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((child, index) =>
+      uncertaintyNumericComponents(child, `${path}[${index}]`),
+    );
+  }
+  return [];
+}
+
+function uncertaintySecondsValue(value: unknown): number | undefined {
+  if (!isRecord(value) || value.unit !== "s" || typeof value.value !== "number") {
+    return undefined;
+  }
+  return Number.isFinite(value.value) ? value.value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

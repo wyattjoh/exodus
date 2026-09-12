@@ -3,14 +3,19 @@ import { describe, expect, test } from "bun:test";
 import {
   compileScenario,
   createJourneyModel,
+  generatedProvenance,
   meters,
   metersPerSecond,
   metersPerSecondSquared,
+  minimalScenario,
   multiLegJourneyScenario,
   planJourney,
+  rangeClaim,
   seconds,
   simulateMultiLegJourney,
+  SPEED_OF_LIGHT,
   vector3,
+  type JourneyDwellTimeline,
   type JourneyLeg,
   type ScenarioInput,
 } from "../src/index";
@@ -144,6 +149,24 @@ function routeScenario(): ScenarioInput {
   };
 }
 
+function movingDepartureScenario(): ScenarioInput {
+  return {
+    ...minimalScenario,
+    gates: minimalScenario.gates.map((candidate) =>
+      candidate.id === "gate:terra"
+        ? {
+            ...candidate,
+            velocityAtEpoch: vector3(
+              metersPerSecond(0.9995 * SPEED_OF_LIGHT.value),
+              metersPerSecond(0),
+              metersPerSecond(0),
+            ),
+          }
+        : candidate,
+    ),
+  };
+}
+
 describe("explicit Gate-network route planning", () => {
   test("expands selected Dwells and required in-system Transfers through multiple Gates", () => {
     const model = createJourneyModel();
@@ -154,6 +177,9 @@ describe("explicit Gate-network route planning", () => {
       shipProfileId: "ship:survey",
       departureCoordinateTime: seconds(0),
       dwells: [{ gateId: "gate:aurora-entry", duration: seconds(2 * 86_400) }],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
       maxAlternatives: undefined,
     });
 
@@ -243,6 +269,9 @@ describe("explicit Gate-network route planning", () => {
       shipProfileId: "ship:route",
       departureCoordinateTime: seconds(0),
       dwells: [],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
       maxAlternatives: undefined,
       searchBudget: { maxCandidateRoutes: 10, maxSearchStates: 100 },
     });
@@ -265,7 +294,7 @@ describe("explicit Gate-network route planning", () => {
     expect(Number(result.plan.agingDifference.value)).toBeGreaterThan(0);
     const alternative = result.alternatives[0];
     if (alternative === undefined) {
-      throw new Error("Expected the direct itinerary as a valid alternative.");
+      throw new Error("Expected the direct Route Plan as a valid alternative.");
     }
     const otherOracle = oracleRoutes.find((route) => route !== expectedWinner);
     if (otherOracle === undefined) {
@@ -288,6 +317,9 @@ describe("explicit Gate-network route planning", () => {
       shipProfileId: "ship:route",
       departureCoordinateTime: seconds(0),
       dwells: [],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
       maxAlternatives: 0,
       searchBudget: { maxCandidateRoutes: 1, maxSearchStates: 100 },
     });
@@ -312,6 +344,9 @@ describe("explicit Gate-network route planning", () => {
       shipProfileId: "ship:route",
       departureCoordinateTime: seconds(0),
       dwells: [],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
       maxAlternatives: undefined,
     });
 
@@ -324,6 +359,448 @@ describe("explicit Gate-network route planning", () => {
     expect(result.plan.gateLegCount).toBe(0);
     expect(result.plan.timeline.legs.map((leg) => leg.kind)).toEqual(["dwell"]);
     expect(Number(result.plan.timeline.clocks.clusterCoordinateTime.value)).toBe(0);
+  });
+
+  test("requires a finite latest-arrival or strategic-wait horizon", () => {
+    const scenario = requireScenario(routeScenario());
+    const result = planJourney(scenario, {
+      departureGateId: "gate:start",
+      destinationGateId: "gate:destination",
+      shipProfileId: "ship:route",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      maxAlternatives: undefined,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.outcome).toBe("invalid");
+    expect(result.issues.some((issue) => issue.code === "missing-horizon")).toBe(true);
+  });
+
+  test("keeps strategic Dwells bounded and inserts none when waiting cannot improve arrival", () => {
+    const scenario = requireScenario(routeScenario());
+    const result = planJourney(scenario, {
+      departureGateId: "gate:start",
+      destinationGateId: "gate:destination",
+      shipProfileId: "ship:route",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(1_000_000),
+      provenanceFilter: undefined,
+      maxAlternatives: undefined,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.plan.strategicDwells).toEqual([]);
+    expect(result.plan.strategicWaitDuration.value).toBeLessThanOrEqual(1_000_000);
+    expect(result.plan.refinementQuality).toBe("bounded-strategic-dwell");
+    expect(result.refinementQuality).toBe("bounded-strategic-dwell");
+    expect(result.search.refinementQuality).toBe("bounded-strategic-dwell");
+    expect(result.search.strategicDwellSearchComplete).toBe(false);
+    expect(result.search.strategicDwellCandidatesEvaluated).toBeGreaterThan(0);
+    expect(result.plan.arrivalBounds.upper.value).toBeLessThanOrEqual(1e16);
+  });
+
+  test("inserts a bounded strategic Dwell when a departure Gate moves faster than cruise", () => {
+    const scenario = requireScenario(movingDepartureScenario());
+    const latestArrivalCoordinateTime = seconds(200_000_000);
+    const maximumStrategicWait = seconds(1_000_000);
+    const zeroWaitBaseline = planJourney(scenario, {
+      departureGateId: "gate:terra",
+      destinationGateId: "gate:selene",
+      shipProfileId: "ship:survey",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime,
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
+      maxAlternatives: 0,
+    });
+
+    expect(zeroWaitBaseline.ok).toBe(true);
+    if (!zeroWaitBaseline.ok) {
+      return;
+    }
+    expect(zeroWaitBaseline.plan.strategicDwells).toEqual([]);
+
+    const optimized = planJourney(scenario, {
+      departureGateId: "gate:terra",
+      destinationGateId: "gate:selene",
+      shipProfileId: "ship:survey",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime,
+      maximumStrategicWait,
+      provenanceFilter: undefined,
+      maxAlternatives: 0,
+    });
+
+    expect(optimized.ok).toBe(true);
+    if (!optimized.ok) {
+      return;
+    }
+    const dwell = optimized.plan.strategicDwells[0];
+    if (dwell === undefined) {
+      throw new Error("Expected a strategic Dwell insertion.");
+    }
+    expect(optimized.plan.timeline.legs.map((leg) => leg.kind)).toEqual([
+      "dwell",
+      "interstellar-cruise",
+    ]);
+    const dwellLeg = optimized.plan.timeline.legs.find((leg) => leg.kind === "dwell");
+    if (dwellLeg === undefined) {
+      throw new Error("Expected a Dwell Timeline entry.");
+    }
+    const dwellTimeline = dwellLeg.timeline as JourneyDwellTimeline;
+    expect(dwellTimeline.kind).toBe("dwell");
+    expect(dwellTimeline.gateId).toBe(dwell.locationGateId);
+    expect(dwellTimeline.departureCoordinateTime.value).toBeCloseTo(
+      dwell.startCoordinateTime.value,
+      9,
+    );
+    expect(dwellTimeline.arrivalCoordinateTime.value).toBeCloseTo(dwell.endCoordinateTime.value, 9);
+    expect(dwellTimeline.duration.value).toBeGreaterThan(0);
+    expect(dwellTimeline.duration.value).toBeLessThanOrEqual(maximumStrategicWait.value);
+    expect(dwellTimeline.duration.value).toBeCloseTo(dwell.duration.value, 9);
+    expect(dwellTimeline.properDuration.value).toBeCloseTo(
+      dwell.clockEffects.shipProperTime.value,
+      9,
+    );
+    expect(dwellTimeline.agingDifference.value).toBeCloseTo(
+      dwell.clockEffects.agingDifference.value,
+      9,
+    );
+    expect(dwell.clockEffects.clusterCoordinateTime.value).toBeCloseTo(
+      dwellTimeline.duration.value,
+      9,
+    );
+    expect(dwell.arrivalTimeBenefit.value).toBeCloseTo(
+      zeroWaitBaseline.plan.arrivalCoordinateTime.value -
+        optimized.plan.arrivalCoordinateTime.value,
+      9,
+    );
+    expect(dwell.arrivalTimeBenefit.value).toBeGreaterThan(0);
+    expect(optimized.plan.arrivalCoordinateTime.value).toBeLessThan(
+      zeroWaitBaseline.plan.arrivalCoordinateTime.value,
+    );
+    expect(optimized.plan.arrivalCoordinateTime.value).toBeLessThanOrEqual(
+      latestArrivalCoordinateTime.value,
+    );
+    expect(optimized.plan.arrivalBounds.upper.value).toBeLessThanOrEqual(
+      latestArrivalCoordinateTime.value,
+    );
+    expect(optimized.plan.refinementQuality).toBe("bounded-strategic-dwell");
+    expect(optimized.search.strategicDwellSearchComplete).toBe(false);
+  });
+
+  test("does not prune a late prefix before bounded strategic-wait optimization", () => {
+    const scenario = requireScenario(routeScenario());
+    const result = planJourney(scenario, {
+      departureGateId: "gate:start",
+      destinationGateId: "gate:destination",
+      shipProfileId: "ship:route",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime: seconds(1),
+      maximumStrategicWait: seconds(1_000_000),
+      provenanceFilter: undefined,
+      maxAlternatives: undefined,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.search?.routesPrunedByHorizon).toBe(0);
+    expect(result.issues.some((issue) => issue.code === "no-valid-route")).toBe(true);
+  });
+
+  test("propagates route-property ranges into phase and arrival bounds", () => {
+    const source = routeScenario();
+    const destination = source.gates.find((candidate) => candidate.id === "gate:destination");
+    if (destination === undefined) {
+      throw new Error("Expected the destination Gate.");
+    }
+    const generated = generatedProvenance("route-test@1");
+    const rangedDestination = {
+      ...destination,
+      properties: {
+        positionAtEpoch: {
+          provenance: generated,
+          claim: rangeClaim({
+            lower: vector3(meters(9.9e16), meters(9.9e16), meters(0)),
+            upper: vector3(meters(1.01e17), meters(1.01e17), meters(0)),
+            nominal: destination.positionAtEpoch,
+            provenance: generated,
+          }),
+        },
+      },
+    };
+    const scenario = requireScenario({
+      ...source,
+      gates: source.gates.map((candidate) =>
+        candidate.id === destination.id ? rangedDestination : candidate,
+      ),
+    });
+    const result = planJourney(scenario, {
+      departureGateId: "gate:start",
+      destinationGateId: "gate:destination",
+      shipProfileId: "ship:route",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
+      maxAlternatives: undefined,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.plan.uncertainty.hasUncertainty).toBe(true);
+    expect(result.plan.uncertainty.propertyPaths).toContain("gate:destination.positionAtEpoch");
+    expect(result.plan.arrivalBounds.lower.value).toBeLessThanOrEqual(
+      result.plan.arrivalCoordinateTime.value,
+    );
+    expect(result.plan.arrivalBounds.upper.value).toBeGreaterThan(
+      result.plan.arrivalCoordinateTime.value,
+    );
+    expect(
+      result.plan.timeline.phases.some(
+        (phase) =>
+          phase.bounds.clusterCoordinateDuration.upper.value >
+          phase.clusterCoordinateDuration.value,
+      ),
+    ).toBe(true);
+  });
+
+  test("reports route alternatives whose conservative arrival ranges overlap the winner", () => {
+    const source = routeScenario();
+    const branchGate = source.gates.find((candidate) => candidate.id === "gate:branch-one-entry");
+    if (branchGate === undefined) {
+      throw new Error("Expected the first branch Entry Gate.");
+    }
+    const provenance = generatedProvenance("route-sensitivity@1");
+    const scenario = requireScenario({
+      ...source,
+      gates: source.gates.map((candidate) =>
+        candidate.id === branchGate.id
+          ? {
+              ...candidate,
+              properties: {
+                positionAtEpoch: {
+                  provenance,
+                  claim: rangeClaim({
+                    lower: vector3(meters(0), meters(0), meters(0)),
+                    upper: vector3(meters(1e17), meters(1e17), meters(0)),
+                    nominal: branchGate.positionAtEpoch,
+                    provenance,
+                  }),
+                },
+              },
+            }
+          : candidate,
+      ),
+    });
+    const result = planJourney(scenario, {
+      departureGateId: "gate:start",
+      destinationGateId: "gate:destination",
+      shipProfileId: "ship:route",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
+      maxAlternatives: 0,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.alternatives).toEqual([]);
+    expect(result.sensitivity.length).toBeGreaterThan(0);
+    expect(result.sensitivity).toEqual(result.sensitivityAlternatives);
+    expect(result.sensitivity[0]?.overlapsNominalWinner).toBe(true);
+    expect(result.plan.arrivalBounds.upper.value).toBeGreaterThan(
+      result.plan.arrivalBounds.lower.value,
+    );
+  });
+
+  test("reports an alternate whose conservative lower bound could beat the nominal winner", () => {
+    const source = routeScenario();
+    const directGate = source.gates.find((candidate) => candidate.id === "gate:detour-entry");
+    if (directGate === undefined) {
+      throw new Error("Expected the direct route Entry Gate.");
+    }
+    const provenance = generatedProvenance("route-sensitivity-lower-bound@1");
+    const scenario = requireScenario({
+      ...source,
+      gates: source.gates.map((candidate) =>
+        candidate.id === directGate.id
+          ? {
+              ...candidate,
+              properties: {
+                positionAtEpoch: {
+                  provenance,
+                  claim: rangeClaim({
+                    lower: vector3(meters(0), meters(0), meters(0)),
+                    upper: vector3(meters(1e17), meters(1e17), meters(0)),
+                    nominal: directGate.positionAtEpoch,
+                    provenance,
+                  }),
+                },
+              },
+            }
+          : candidate,
+      ),
+    });
+    const result = planJourney(scenario, {
+      departureGateId: "gate:start",
+      destinationGateId: "gate:destination",
+      shipProfileId: "ship:route",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
+      maxAlternatives: 0,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(
+      result.sensitivity.some(
+        (candidate) =>
+          candidate.connectionIds.includes("connection:start-detour") &&
+          candidate.couldBeatNominalWinner &&
+          candidate.reason === "could-beat-nominal-winner",
+      ),
+    ).toBe(true);
+  });
+
+  test("filters generated Gate Connections without assigning them a nominal cost penalty", () => {
+    const source = routeScenario();
+    const generated = generatedProvenance("route-filter@1");
+    const scenario = requireScenario({
+      ...source,
+      gateConnections: source.gateConnections.map((connection) =>
+        connection.id === "connection:branch-one"
+          ? { ...connection, provenance: generated }
+          : connection,
+      ),
+    });
+    const unfiltered = planJourney(scenario, {
+      departureGateId: "gate:start",
+      destinationGateId: "gate:destination",
+      shipProfileId: "ship:route",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
+      maxAlternatives: undefined,
+    });
+    const filtered = planJourney(scenario, {
+      departureGateId: "gate:start",
+      destinationGateId: "gate:destination",
+      shipProfileId: "ship:route",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: {
+        allowedKinds: undefined,
+        excludedKinds: ["generated"],
+        allowedAuthorities: undefined,
+        minimumAuthority: undefined,
+      },
+      maxAlternatives: undefined,
+    });
+
+    expect(unfiltered.ok).toBe(true);
+    expect(filtered.ok).toBe(true);
+    if (!unfiltered.ok || !filtered.ok) {
+      return;
+    }
+    expect(unfiltered.plan.connectionIds).toContain("connection:branch-one");
+    expect(filtered.plan.connectionIds).not.toContain("connection:branch-one");
+    expect(filtered.plan.connectionIds).toContain("connection:start-detour");
+    expect(filtered.plan.arrivalCoordinateTime.value).toBeGreaterThan(
+      unfiltered.plan.arrivalCoordinateTime.value,
+    );
+    expect(filtered.issues).toEqual([]);
+  });
+
+  test("rejects a latest-arrival horizon that no route can satisfy", () => {
+    const scenario = requireScenario(routeScenario());
+    const result = planJourney(scenario, {
+      departureGateId: "gate:start",
+      destinationGateId: "gate:destination",
+      shipProfileId: "ship:route",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime: seconds(1),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
+      maxAlternatives: undefined,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.issues.some((issue) => issue.code === "horizon-exceeded")).toBe(true);
+    expect(result.search?.routesPrunedByHorizon).toBeGreaterThan(0);
+  });
+
+  test("rejects a conservative arrival upper bound beyond a close numerical horizon", () => {
+    const scenario = requireScenario(movingDepartureScenario());
+    const baseline = planJourney(scenario, {
+      departureGateId: "gate:terra",
+      destinationGateId: "gate:selene",
+      shipProfileId: "ship:survey",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime: seconds(200_000_000),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
+      maxAlternatives: 0,
+    });
+
+    expect(baseline.ok).toBe(true);
+    if (!baseline.ok) {
+      return;
+    }
+    const baselineUpper = Number(baseline.plan.arrivalBounds.upper.value);
+    const closeHorizon = seconds(baselineUpper - 5e-8);
+    const result = planJourney(scenario, {
+      departureGateId: "gate:terra",
+      destinationGateId: "gate:selene",
+      shipProfileId: "ship:survey",
+      departureCoordinateTime: seconds(0),
+      dwells: [],
+      latestArrivalCoordinateTime: closeHorizon,
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
+      maxAlternatives: 0,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.issues.some((issue) => issue.code === "horizon-exceeded")).toBe(true);
   });
 
   test("returns structured disconnected and invalid outcomes", () => {
@@ -391,6 +868,9 @@ describe("explicit Gate-network route planning", () => {
       shipProfileId: "ship:route",
       departureCoordinateTime: seconds(0),
       dwells: [],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
       maxAlternatives: undefined,
     });
     expect(disconnected.ok).toBe(false);
@@ -406,6 +886,9 @@ describe("explicit Gate-network route planning", () => {
       shipProfileId: "ship:route",
       departureCoordinateTime: seconds(0),
       dwells: [],
+      latestArrivalCoordinateTime: seconds(1e16),
+      maximumStrategicWait: seconds(0),
+      provenanceFilter: undefined,
       maxAlternatives: undefined,
     });
     expect(invalid.ok).toBe(false);

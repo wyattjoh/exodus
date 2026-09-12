@@ -67,20 +67,29 @@ proper time is integrated from the Gate worldline. Its cumulative clocks are exp
 `timeline.clocks`; `multiLegJourneyScenario` and `multiLegJourneyRequest` provide a deterministic
 end-to-end public-seam fixture.
 
-`planJourney` (also exported as `planRoute` and available on `createJourneyModel()`) exhaustively
-expands a finite explicit Gate network. Every compiled Gate must belong to exactly one
-bidirectional Gate Connection; changing to another Gate in one System inserts a powered
-In-system Transfer before the next Cruise. Requests may select Gate Dwells, which are carried
-into every candidate simulation. The successful result ranks nominal final Cluster Coordinate
-Time, returns the complete winning `MultiLegJourneyTimeline`, selected `gateIds` and
-`connectionIds`, and exposes a capped set of non-winning `alternatives`. Each Route Plan also
-reports nominal `clusterCoordinateTime`, `shipProperTime`, `agingDifference`, and `gateLegCount`.
-The exact search has a finite `RoutePlanningSearchBudget` (10,000 candidates and 100,000 search
-states by default); if that budget is exhausted, the planner returns an `incomplete` structured
-outcome without presenting a partial plan as globally earliest. `maxAlternatives` only limits
-retained output and never limits the exact search. Disconnected topology and invalid requests are
-returned as structured failure outcomes. Strategic Dwell optimization and generated-network
-approximation are intentionally not part of this explicit planner.
+`planJourney` (also exported as `planRoute` and available on `createJourneyModel()`) searches a
+finite explicit Gate network. Every compiled Gate must belong to exactly one bidirectional Gate
+Connection; changing to another Gate in one System inserts a powered In-system Transfer before
+the next Cruise. Requests may select Gate Dwells, which are carried into every candidate
+simulation, and must provide a finite `latestArrivalCoordinateTime` or `maximumStrategicWait`
+horizon. Within that bounded wait horizon, the planner evaluates deterministic strategic-Dwell
+candidates and inserts a Dwell only when it improves the route's final nominal arrival. Each
+inserted Dwell reports its Gate, duration, clock effects, and arrival-time benefit. The successful
+result ranks nominal final Cluster Coordinate Time, returns the complete winning
+`MultiLegJourneyTimeline`, selected `gateIds` and `connectionIds`, conservative arrival bounds,
+and a capped set of non-winning `alternatives`. `RouteSensitivity` entries identify retained
+alternatives whose possible arrival ranges overlap or beat the nominal winner. Route uncertainty
+is scoped to the physical properties used by each candidate, and `provenanceFilter` can exclude
+route data without assigning generated links a hidden cost penalty. `refinementQuality` is
+`exact` when no strategic wait is searched and `bounded-strategic-dwell` when the finite grid and
+local refinement are used, making the bounded nature of continuous-wait optimization explicit;
+`strategicDwellSearchComplete` remains false for that approximate continuous-wait domain.
+
+The finite search has a `RoutePlanningSearchBudget` (10,000 candidates and 100,000 search states
+by default), and strategic-wait evaluation has its own fixed candidate ceiling. If either budget
+is exhausted, the planner returns an `incomplete` structured outcome without presenting a partial
+plan as globally earliest. `maxAlternatives` only limits retained output and never limits the
+search. Disconnected topology and invalid requests are returned as structured failure outcomes.
 
 ## Provenance, claims, and uncertainty
 

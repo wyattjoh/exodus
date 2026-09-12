@@ -28,6 +28,25 @@ import type {
   JourneySimulationResult,
   MultiLegJourneySimulationResult,
 } from "./simulation";
+import {
+  createDisplayPrecision,
+  createPropertyMetadata,
+  createProvenance,
+  createScenarioOverrideLayer,
+  provisionalProvenance,
+  type CanonicalClaim,
+  type CanonicalIdentity,
+  type CanonicalIdentityInput,
+  type ConservativeBounds,
+  type DisplayPrecision,
+  type PropertyMetadata,
+  type PropertyMetadataInput,
+  type Provenance,
+  type ProvenanceInput,
+  type ScenarioOverrideChange,
+  type ScenarioOverrideLayer,
+  type ScenarioOverrideLayerInput,
+} from "./provenance";
 
 const stableIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -124,6 +143,59 @@ export type ScenarioEpoch = {
 };
 
 /**
+ * Provenance metadata accepted on an entity while retaining the legacy raw-property input shape.
+ */
+export type EntityProvenanceInput = {
+  readonly canonicalIdentity?: CanonicalIdentityInput | undefined;
+  readonly provenance?: Provenance | ProvenanceInput | undefined;
+  readonly properties?: Readonly<Record<string, PropertyMetadataInput<unknown>>> | undefined;
+  readonly propertyProvenance?:
+    | Readonly<Record<string, PropertyMetadataInput<unknown>>>
+    | undefined;
+};
+
+/**
+ * Complete provenance metadata stored on every compiled entity.
+ */
+export type CompiledEntityProvenance = {
+  readonly canonicalIdentity: CanonicalIdentity;
+  readonly provenance: Provenance;
+  readonly properties: Readonly<Record<string, PropertyMetadata<unknown>>>;
+  readonly propertyProvenance: Readonly<Record<string, PropertyMetadata<unknown>>>;
+};
+
+/**
+ * A Canonical Claim attached to a Scenario-level journey or catalog fact.
+ */
+export type ScenarioCanonicalClaimInput = {
+  readonly id: string;
+  readonly subject: string;
+  readonly property: string;
+  readonly claim: CanonicalClaim<unknown> | Record<string, unknown>;
+};
+
+/**
+ * A normalized Scenario-level Canonical Claim record.
+ */
+export type ScenarioCanonicalClaim = {
+  readonly id: StableId;
+  readonly subject: string;
+  readonly property: string;
+  readonly claim: CanonicalClaim<unknown>;
+};
+
+/**
+ * A compact uncertainty summary derived from ranged Scenario properties.
+ */
+export type ScenarioUncertainty = {
+  readonly hasUncertainty: boolean;
+  readonly relativeFactor: number;
+  readonly absoluteSeconds: number;
+  readonly propertyPaths: readonly string[];
+  readonly displayPrecision: DisplayPrecision;
+};
+
+/**
  * A System input accepted by Scenario compilation.
  */
 export type SystemInput = {
@@ -132,7 +204,7 @@ export type SystemInput = {
   readonly name: string;
   readonly positionAtEpoch: PositionVector;
   readonly velocityAtEpoch: VelocityVector;
-};
+} & EntityProvenanceInput;
 
 /**
  * An Orbital Anchor input accepted by Scenario compilation.
@@ -148,7 +220,7 @@ export type OrbitalAnchorInput = {
   readonly velocityAtEpoch: VelocityVector;
   readonly orbitalElements?: KeplerianOrbitInput | undefined;
   readonly orbit?: KeplerianOrbitInput | undefined;
-};
+} & EntityProvenanceInput;
 
 /**
  * A Gate of Heaven input accepted by Scenario compilation.
@@ -163,7 +235,7 @@ export type GateInput = {
   readonly velocityAtEpoch: VelocityVector;
   readonly orbitalElements?: KeplerianOrbitInput | undefined;
   readonly orbit?: KeplerianOrbitInput | undefined;
-};
+} & EntityProvenanceInput;
 
 /**
  * A bidirectional pairing between exactly two Gates of Heaven.
@@ -174,7 +246,7 @@ export type GateConnectionInput = {
   readonly name: string;
   readonly gateAId: string;
   readonly gateBId: string;
-};
+} & EntityProvenanceInput;
 
 /**
  * The sublight capabilities and gate-travel equipment of one ship.
@@ -187,10 +259,10 @@ export type ShipProfileInput = {
   readonly brakingAcceleration: MetersPerSecondSquared;
   readonly maximumSublightSpeed: MetersPerSecond;
   readonly hasZpzGenerator: boolean;
-};
+} & EntityProvenanceInput;
 
 /**
- * A complete Scenario input for the initial headless Journey Model seam.
+ * A complete Scenario input for the headless Journey Model seam.
  */
 export type ScenarioInput = {
   readonly id: string;
@@ -202,56 +274,61 @@ export type ScenarioInput = {
   readonly gates: readonly GateInput[];
   readonly gateConnections: readonly GateConnectionInput[];
   readonly shipProfiles: readonly ShipProfileInput[];
-};
+  readonly canonicalClaims?: readonly ScenarioCanonicalClaimInput[] | undefined;
+  readonly overrides?: readonly ScenarioOverrideLayerInput[] | undefined;
+} & EntityProvenanceInput;
 
 /**
- * A System after all identifiers, quantities, and references have been validated.
+ * A System after all identifiers, quantities, references, and provenance have been validated.
  */
-export type CompiledSystem = Omit<SystemInput, "id"> & {
+export type CompiledSystem = Omit<SystemInput, "id" | keyof EntityProvenanceInput> & {
   readonly id: StableId;
-};
+} & CompiledEntityProvenance;
 
 /**
- * An Orbital Anchor after all identifiers, quantities, and references have been validated.
+ * An Orbital Anchor after all identifiers, quantities, references, and provenance have been validated.
  */
 export type CompiledOrbitalAnchor = Omit<
   OrbitalAnchorInput,
-  "id" | "systemId" | "parentId" | "orbitalElements" | "orbit"
+  "id" | "systemId" | "parentId" | "orbitalElements" | "orbit" | keyof EntityProvenanceInput
 > & {
   readonly id: StableId;
   readonly systemId: StableId;
   readonly parentId: StableId | undefined;
   readonly orbitalElements: CompiledKeplerianOrbit | undefined;
-};
+} & CompiledEntityProvenance;
 
 /**
- * A Gate of Heaven after all identifiers, quantities, and references have been validated.
+ * A Gate of Heaven after all identifiers, quantities, references, and provenance have been validated.
  */
 export type CompiledGate = Omit<
   GateInput,
-  "id" | "systemId" | "orbitalAnchorId" | "orbitalElements" | "orbit"
+  "id" | "systemId" | "orbitalAnchorId" | "orbitalElements" | "orbit" | keyof EntityProvenanceInput
 > & {
   readonly id: StableId;
   readonly systemId: StableId;
   readonly orbitalAnchorId: StableId;
   readonly orbitalElements: CompiledKeplerianOrbit | undefined;
-};
+} & CompiledEntityProvenance;
 
 /**
- * A Gate Connection after its two Gate references have been validated.
+ * A Gate Connection after its two Gate references and provenance have been validated.
  */
-export type CompiledGateConnection = Omit<GateConnectionInput, "id" | "gateAId" | "gateBId"> & {
+export type CompiledGateConnection = Omit<
+  GateConnectionInput,
+  "id" | "gateAId" | "gateBId" | keyof EntityProvenanceInput
+> & {
   readonly id: StableId;
   readonly gateAId: StableId;
   readonly gateBId: StableId;
-};
+} & CompiledEntityProvenance;
 
 /**
- * A Ship Profile after all physical capabilities have been validated.
+ * A Ship Profile after its physical capabilities and provenance have been validated.
  */
-export type CompiledShipProfile = Omit<ShipProfileInput, "id"> & {
+export type CompiledShipProfile = Omit<ShipProfileInput, "id" | keyof EntityProvenanceInput> & {
   readonly id: StableId;
-};
+} & CompiledEntityProvenance;
 
 /**
  * An immutable lookup index for compiled entities.
@@ -294,6 +371,15 @@ export type CompiledScenario = {
   readonly gates: readonly CompiledGate[];
   readonly gateConnections: readonly CompiledGateConnection[];
   readonly shipProfiles: readonly CompiledShipProfile[];
+  readonly canonicalIdentity: CanonicalIdentity;
+  readonly provenance: Provenance;
+  readonly properties: Readonly<Record<string, PropertyMetadata<unknown>>>;
+  readonly propertyProvenance: Readonly<Record<string, PropertyMetadata<unknown>>>;
+  readonly canonicalClaims: readonly ScenarioCanonicalClaim[];
+  readonly overrideLayers: readonly ScenarioOverrideLayer[];
+  readonly overrides: readonly ScenarioOverrideLayer[];
+  readonly uncertainty: ScenarioUncertainty;
+  readonly overrideBase: CompiledScenario | undefined;
   readonly index: CompiledScenarioIndex;
 };
 
@@ -308,7 +394,12 @@ export type ValidationIssueCode =
   | "broken-reference"
   | "invalid-gate-pairing"
   | "orbital-cycle"
-  | "invalid-orbital-elements";
+  | "invalid-orbital-elements"
+  | "invalid-provenance"
+  | "invalid-citation"
+  | "invalid-claim"
+  | "invalid-precision"
+  | "invalid-override";
 
 /**
  * A structured explanation of one invalid Scenario input.
@@ -530,6 +621,18 @@ export type JourneyModel = {
     scenario: CompiledScenario,
     request: unknown,
   ) => InSystemTransferSimulationResult;
+  readonly applyScenarioOverrides: (
+    scenario: CompiledScenario,
+    layers: readonly ScenarioOverrideLayerInput[],
+  ) => CompiledScenario;
+  readonly compareScenarioOverrides: (
+    before: CompiledScenario,
+    after: CompiledScenario,
+  ) => readonly import("./provenance").OverrideChangeComparison[];
+  readonly revertScenarioOverride: (
+    scenario: CompiledScenario,
+    layerId: string,
+  ) => CompiledScenario;
 };
 
 type RecordValue = Record<string, unknown>;
@@ -1202,6 +1305,542 @@ function issueComparator(left: ValidationIssue, right: ValidationIssue): number 
   return left.code.localeCompare(right.code);
 }
 
+const DEFAULT_PROVENANCE = provisionalProvenance("No source provenance was supplied.");
+const CORE_SYSTEM_PROPERTIES = [
+  "designation",
+  "name",
+  "positionAtEpoch",
+  "velocityAtEpoch",
+] as const;
+const CORE_ANCHOR_PROPERTIES = [
+  "designation",
+  "name",
+  "kind",
+  "systemId",
+  "parentId",
+  "positionAtEpoch",
+  "velocityAtEpoch",
+  "orbitalElements",
+] as const;
+const CORE_GATE_PROPERTIES = [
+  "designation",
+  "name",
+  "systemId",
+  "orbitalAnchorId",
+  "positionAtEpoch",
+  "velocityAtEpoch",
+  "orbitalElements",
+] as const;
+const CORE_CONNECTION_PROPERTIES = ["designation", "name", "gateAId", "gateBId"] as const;
+const CORE_SHIP_PROPERTIES = [
+  "designation",
+  "name",
+  "acceleration",
+  "brakingAcceleration",
+  "maximumSublightSpeed",
+  "hasZpzGenerator",
+] as const;
+const SUPPORTED_OVERRIDE_PROPERTIES: Readonly<Record<DomainEntityType, readonly string[]>> =
+  Object.freeze({
+    scenario: ["designation", "name", "epoch"],
+    system: CORE_SYSTEM_PROPERTIES,
+    "orbital-anchor": CORE_ANCHOR_PROPERTIES,
+    gate: CORE_GATE_PROPERTIES,
+    "gate-connection": CORE_CONNECTION_PROPERTIES,
+    "ship-profile": CORE_SHIP_PROPERTIES,
+  });
+
+function metadataRecord(
+  record: RecordValue,
+  key: "properties" | "propertyProvenance",
+): RecordValue {
+  const value = record[key];
+  return isRecord(value) ? value : {};
+}
+
+function rawPropertyMetadata(record: RecordValue, property: string): RecordValue | undefined {
+  const properties = metadataRecord(record, "properties");
+  const propertyProvenance = metadataRecord(record, "propertyProvenance");
+  const value = properties[property] ?? propertyProvenance[property];
+  return isRecord(value) ? value : undefined;
+}
+
+function rawPropertyValue(record: RecordValue, property: string): unknown {
+  const metadata = rawPropertyMetadata(record, property);
+  if (metadata !== undefined) {
+    const rawClaim = metadata.claim ?? metadata.canonicalClaim;
+    if (isRecord(rawClaim)) {
+      if (rawClaim.kind === "exact" && hasOwn(rawClaim, "value")) {
+        return rawClaim.value;
+      }
+      if (rawClaim.kind === "range") {
+        return hasOwn(rawClaim, "nominal") ? rawClaim.nominal : rawClaim.lower;
+      }
+    }
+    if (hasOwn(metadata, "nominal")) {
+      return metadata.nominal;
+    }
+    if (hasOwn(metadata, "value")) {
+      return metadata.value;
+    }
+  }
+  return record[property];
+}
+
+function provenanceInputForProperty(
+  metadata: RecordValue | undefined,
+): Provenance | ProvenanceInput | undefined {
+  if (metadata === undefined) {
+    return undefined;
+  }
+  if (metadata.provenance !== undefined) {
+    return metadata.provenance as Provenance | ProvenanceInput;
+  }
+  if (
+    metadata.kind === "novel" ||
+    metadata.kind === "supplementary-official" ||
+    metadata.kind === "provisional" ||
+    metadata.kind === "generated" ||
+    metadata.kind === "override"
+  ) {
+    return metadata as ProvenanceInput;
+  }
+  return undefined;
+}
+
+function metadataInputForProperty(
+  metadata: RecordValue | undefined,
+): PropertyMetadataInput<unknown> | undefined {
+  if (metadata === undefined) {
+    return undefined;
+  }
+  if (provenanceInputForProperty(metadata) !== undefined && !hasOwn(metadata, "provenance")) {
+    return { provenance: provenanceInputForProperty(metadata) };
+  }
+  return metadata as PropertyMetadataInput<unknown>;
+}
+
+function metadataIssueCode(message: string): ValidationIssueCode {
+  if (message.includes("citation")) {
+    return "invalid-citation";
+  }
+  if (message.includes("Claim") || message.includes("claim")) {
+    return "invalid-claim";
+  }
+  if (message.includes("precision")) {
+    return "invalid-precision";
+  }
+  return "invalid-provenance";
+}
+
+function normalizeEntityProvenance(
+  record: RecordValue,
+  entityType: DomainEntityType,
+  entityId: StableId,
+  designation: string,
+  name: string,
+  propertyNames: readonly string[],
+  path: string,
+  issues: ValidationIssue[],
+): CompiledEntityProvenance {
+  let entityProvenance = DEFAULT_PROVENANCE;
+  if (record.provenance !== undefined) {
+    try {
+      entityProvenance = createProvenance(record.provenance as ProvenanceInput);
+    } catch (error) {
+      addIssue(
+        issues,
+        "invalid-provenance",
+        `${path}.provenance`,
+        error instanceof Error ? error.message : `${path}.provenance is invalid.`,
+        entityType,
+        entityId,
+        undefined,
+      );
+    }
+  }
+
+  const identityInput = record.canonicalIdentity;
+  let canonicalIdentity: CanonicalIdentity;
+  try {
+    if (identityInput === undefined) {
+      canonicalIdentity = Object.freeze({
+        id: entityId,
+        designation,
+        name,
+        provenance: entityProvenance,
+      });
+    } else if (typeof identityInput === "string") {
+      if (!stableIdentifierPattern.test(identityInput)) {
+        throw new RangeError("Canonical identity id must be a stable identifier.");
+      }
+      canonicalIdentity = Object.freeze({
+        id: identityInput,
+        designation,
+        name,
+        provenance: entityProvenance,
+      });
+    } else if (isRecord(identityInput)) {
+      const identityId = identityInput.id === undefined ? entityId : identityInput.id;
+      if (typeof identityId !== "string" || !stableIdentifierPattern.test(identityId)) {
+        throw new RangeError("Canonical identity id must be a stable identifier.");
+      }
+      const identityProvenance =
+        identityInput.provenance === undefined
+          ? entityProvenance
+          : createProvenance(identityInput.provenance as ProvenanceInput);
+      canonicalIdentity = Object.freeze({
+        id: identityId,
+        designation:
+          identityInput.designation === undefined
+            ? designation
+            : readIdentityText(identityInput.designation, "canonicalIdentity.designation"),
+        name:
+          identityInput.name === undefined
+            ? name
+            : readIdentityText(identityInput.name, "canonicalIdentity.name"),
+        provenance: identityProvenance,
+      });
+    } else {
+      throw new RangeError("canonicalIdentity must be an object or stable identifier.");
+    }
+  } catch (error) {
+    addIssue(
+      issues,
+      "invalid-provenance",
+      `${path}.canonicalIdentity`,
+      error instanceof Error ? error.message : `${path}.canonicalIdentity is invalid.`,
+      entityType,
+      entityId,
+      undefined,
+    );
+    canonicalIdentity = Object.freeze({
+      id: entityId,
+      designation,
+      name,
+      provenance: entityProvenance,
+    });
+  }
+
+  const propertyNamesWithMetadata = new Set(propertyNames);
+  for (const key of ["properties", "propertyProvenance"] as const) {
+    for (const property of Object.keys(metadataRecord(record, key))) {
+      propertyNamesWithMetadata.add(property);
+    }
+  }
+  const properties: Record<string, PropertyMetadata<unknown>> = {};
+  for (const property of propertyNamesWithMetadata) {
+    const propertyMetadata = rawPropertyMetadata(record, property);
+    try {
+      properties[property] = createPropertyMetadata(property, rawPropertyValue(record, property), {
+        ...metadataInputForProperty(propertyMetadata),
+        provenance:
+          provenanceInputForProperty(propertyMetadata) ??
+          (propertyMetadata === undefined ? entityProvenance : undefined),
+      });
+    } catch (error) {
+      addIssue(
+        issues,
+        metadataIssueCode(error instanceof Error ? error.message : ""),
+        `${path}.properties.${property}`,
+        error instanceof Error ? error.message : `${path}.properties.${property} is invalid.`,
+        entityType,
+        entityId,
+        undefined,
+      );
+      properties[property] = createPropertyMetadata(property, rawPropertyValue(record, property), {
+        provenance: entityProvenance,
+      });
+    }
+  }
+  const immutableProperties = Object.freeze(properties);
+  return Object.freeze({
+    canonicalIdentity,
+    provenance: entityProvenance,
+    properties: immutableProperties,
+    propertyProvenance: immutableProperties,
+  });
+}
+
+function readIdentityText(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new RangeError(`${path} must be a non-empty string.`);
+  }
+  return value;
+}
+
+function compileScenarioOverrides(
+  record: RecordValue,
+  issues: ValidationIssue[],
+): readonly ScenarioOverrideLayer[] {
+  const rawOverrides = record.overrides;
+  if (rawOverrides === undefined) {
+    return [];
+  }
+  if (!Array.isArray(rawOverrides)) {
+    addIssue(
+      issues,
+      "invalid-override",
+      "overrides",
+      "overrides must be an array.",
+      "scenario",
+      undefined,
+      undefined,
+    );
+    return [];
+  }
+  const layers: ScenarioOverrideLayer[] = [];
+  for (const [index, rawLayer] of rawOverrides.entries()) {
+    try {
+      layers.push(createScenarioOverrideLayer(rawLayer as ScenarioOverrideLayerInput));
+    } catch (error) {
+      addIssue(
+        issues,
+        "invalid-override",
+        `overrides[${index}]`,
+        error instanceof Error ? error.message : `overrides[${index}] is invalid.`,
+        "scenario",
+        undefined,
+        undefined,
+      );
+    }
+  }
+  return Object.freeze(layers);
+}
+
+function compileScenarioClaims(
+  record: RecordValue,
+  issues: ValidationIssue[],
+): readonly ScenarioCanonicalClaim[] {
+  const rawClaims = record.canonicalClaims;
+  if (rawClaims === undefined) {
+    return [];
+  }
+  if (!Array.isArray(rawClaims)) {
+    addIssue(
+      issues,
+      "invalid-structure",
+      "canonicalClaims",
+      "canonicalClaims must be an array.",
+      "scenario",
+      undefined,
+      undefined,
+    );
+    return [];
+  }
+  const claims: ScenarioCanonicalClaim[] = [];
+  for (const [index, rawClaim] of rawClaims.entries()) {
+    const path = `canonicalClaims[${index}]`;
+    if (!isRecord(rawClaim)) {
+      addIssue(
+        issues,
+        "invalid-claim",
+        path,
+        `${path} must be an object.`,
+        "scenario",
+        undefined,
+        undefined,
+      );
+      continue;
+    }
+    const id = rawClaim.id;
+    const subject = rawClaim.subject;
+    const property = rawClaim.property;
+    if (
+      typeof id !== "string" ||
+      !stableIdentifierPattern.test(id) ||
+      typeof subject !== "string" ||
+      subject.trim().length === 0 ||
+      typeof property !== "string" ||
+      property.trim().length === 0
+    ) {
+      addIssue(
+        issues,
+        "invalid-claim",
+        path,
+        `${path} requires a stable id, subject, and property.`,
+        "scenario",
+        id as string | undefined,
+        undefined,
+      );
+      continue;
+    }
+    try {
+      const metadata = createPropertyMetadata(property, undefined, {
+        claim: rawClaim.claim as Record<string, unknown>,
+      });
+      if (metadata.claim === undefined) {
+        throw new RangeError(
+          `${path}.claim must be an exact, range, or qualitative Canonical Claim.`,
+        );
+      }
+      claims.push(
+        Object.freeze({
+          id: asStableId(id),
+          subject,
+          property,
+          claim: metadata.claim,
+        }),
+      );
+    } catch (error) {
+      addIssue(
+        issues,
+        metadataIssueCode(error instanceof Error ? error.message : "claim"),
+        `${path}.claim`,
+        error instanceof Error ? error.message : `${path}.claim is invalid.`,
+        "scenario",
+        asStableId(id),
+        undefined,
+      );
+    }
+  }
+  return Object.freeze(claims);
+}
+
+function numericComponents(value: unknown): readonly number[] {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return [value];
+  }
+  if (isRecord(value)) {
+    if (typeof value.value === "number" && Number.isFinite(value.value)) {
+      return [value.value];
+    }
+    return Object.values(value).flatMap((child) => numericComponents(child));
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((child) => numericComponents(child));
+  }
+  return [];
+}
+
+function rangeRelativeWidth(
+  lower: unknown,
+  upper: unknown,
+  nominal: unknown,
+): { readonly relative: number; readonly absolute: number } {
+  const lowerValues = numericComponents(lower);
+  const upperValues = numericComponents(upper);
+  const nominalValues = numericComponents(nominal);
+  const count = Math.min(lowerValues.length, upperValues.length, nominalValues.length);
+  if (count === 0) {
+    return { relative: 0, absolute: 0 };
+  }
+  let squaredWidth = 0;
+  let squaredMagnitude = 0;
+  for (let index = 0; index < count; index += 1) {
+    const lowerValue = lowerValues[index] ?? 0;
+    const upperValue = upperValues[index] ?? 0;
+    const nominalValue = nominalValues[index] ?? 0;
+    squaredWidth += ((upperValue - lowerValue) / 2) ** 2;
+    squaredMagnitude += nominalValue ** 2;
+  }
+  const absolute = Math.sqrt(squaredWidth);
+  const magnitude = Math.sqrt(squaredMagnitude);
+  return {
+    relative: absolute / Math.max(1, magnitude),
+    absolute,
+  };
+}
+
+function explicitSecondsRangeWidth(
+  lower: unknown,
+  upper: unknown,
+  nominal: unknown,
+): number | undefined {
+  const lowerValue = explicitSecondsValue(lower);
+  const upperValue = explicitSecondsValue(upper);
+  const nominalValue = explicitSecondsValue(nominal);
+  if (lowerValue === undefined || upperValue === undefined || nominalValue === undefined) {
+    return undefined;
+  }
+  return Math.abs(upperValue - lowerValue) / 2;
+}
+
+function explicitSecondsValue(value: unknown): number | undefined {
+  if (!isRecord(value) || value.unit !== "s" || typeof value.value !== "number") {
+    return undefined;
+  }
+  return Number.isFinite(value.value) ? value.value : undefined;
+}
+
+function scenarioUncertainty(
+  scenarioProperties: Readonly<Record<string, PropertyMetadata<unknown>>>,
+  entities: readonly CompiledEntityProvenance[],
+  canonicalClaims: readonly ScenarioCanonicalClaim[],
+): ScenarioUncertainty {
+  let relativeFactor = 0;
+  let absoluteSeconds = 0;
+  let hasUncertainty = false;
+  const propertyPaths: string[] = [];
+  let bestPrecision: DisplayPrecision | undefined;
+  const visit = (
+    path: string,
+    properties: Readonly<Record<string, PropertyMetadata<unknown>>>,
+  ): void => {
+    for (const [property, metadata] of Object.entries(properties)) {
+      const precision = metadata.displayPrecision;
+      if (
+        bestPrecision === undefined ||
+        precision.significantDigits < bestPrecision.significantDigits
+      ) {
+        bestPrecision = precision;
+      }
+      const bounds = metadata.bounds;
+      if (bounds === undefined) {
+        continue;
+      }
+      const width = rangeRelativeWidth(bounds.lower, bounds.upper, bounds.nominal);
+      if (width.absolute <= 0) {
+        continue;
+      }
+      hasUncertainty = true;
+      const timeWidth = explicitSecondsRangeWidth(bounds.lower, bounds.upper, bounds.nominal);
+      if (timeWidth !== undefined && timeWidth > 0) {
+        relativeFactor += width.relative;
+        absoluteSeconds += timeWidth;
+      }
+      propertyPaths.push(`${path}.${property}`);
+    }
+  };
+  visit("scenario", scenarioProperties);
+  for (const entity of entities) {
+    visit(entity.canonicalIdentity.id, entity.properties);
+  }
+  for (const claim of canonicalClaims) {
+    if (claim.claim.kind !== "range") {
+      continue;
+    }
+    const width = rangeRelativeWidth(claim.claim.lower, claim.claim.upper, claim.claim.nominal);
+    if (width.absolute <= 0) {
+      continue;
+    }
+    hasUncertainty = true;
+    const timeWidth = explicitSecondsRangeWidth(
+      claim.claim.lower,
+      claim.claim.upper,
+      claim.claim.nominal,
+    );
+    if (timeWidth !== undefined && timeWidth > 0) {
+      relativeFactor += width.relative;
+      absoluteSeconds += timeWidth;
+    }
+    propertyPaths.push(`canonicalClaims.${claim.id}`);
+    if (
+      bestPrecision === undefined ||
+      claim.claim.precision.significantDigits < bestPrecision.significantDigits
+    ) {
+      bestPrecision = claim.claim.precision;
+    }
+  }
+  return Object.freeze({
+    hasUncertainty,
+    relativeFactor: Math.max(0, relativeFactor),
+    absoluteSeconds: Number.isFinite(absoluteSeconds) ? absoluteSeconds : 0,
+    propertyPaths: Object.freeze(propertyPaths.sort()),
+    displayPrecision: bestPrecision ?? createDisplayPrecision({}, "default"),
+  });
+}
+
 function failure(issues: readonly ValidationIssue[]): CompileScenarioFailure {
   return Object.freeze({
     ok: false as const,
@@ -1525,15 +2164,22 @@ export function compileScenario(input: unknown): CompileScenarioResult {
 
   const scenarioIdValue = readIdentifier(input, "id", "id", issues, "scenario", undefined);
   const scenarioDesignation = readText(
-    input,
+    { ...input, designation: rawPropertyValue(input, "designation") },
     "designation",
     "designation",
     issues,
     "scenario",
     scenarioIdValue,
   );
-  const scenarioName = readText(input, "name", "name", issues, "scenario", scenarioIdValue);
-  const epoch = readEpoch(input, issues);
+  const scenarioName = readText(
+    { ...input, name: rawPropertyValue(input, "name") },
+    "name",
+    "name",
+    issues,
+    "scenario",
+    scenarioIdValue,
+  );
+  const epoch = readEpoch({ ...input, epoch: rawPropertyValue(input, "epoch") }, issues);
   const seenIds = new Map<string, ParsedEntity>();
   const scenarioId = registerId(scenarioIdValue, "id", "scenario", seenIds, issues);
 
@@ -1567,16 +2213,23 @@ export function compileScenario(input: unknown): CompileScenarioResult {
     const idValue = readIdentifier(raw, "id", `${path}.id`, issues, "system", undefined);
     const id = registerId(idValue, `${path}.id`, "system", seenIds, issues);
     const designation = readText(
-      raw,
+      { ...raw, designation: rawPropertyValue(raw, "designation") },
       "designation",
       `${path}.designation`,
       issues,
       "system",
       idValue,
     );
-    const name = readText(raw, "name", `${path}.name`, issues, "system", idValue);
+    const name = readText(
+      { ...raw, name: rawPropertyValue(raw, "name") },
+      "name",
+      `${path}.name`,
+      issues,
+      "system",
+      idValue,
+    );
     const positionAtEpoch = readVector(
-      raw.positionAtEpoch,
+      rawPropertyValue(raw, "positionAtEpoch"),
       "m",
       `${path}.positionAtEpoch`,
       issues,
@@ -1584,7 +2237,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       idValue,
     ) as PositionVector | undefined;
     const velocityAtEpoch = readVector(
-      raw.velocityAtEpoch,
+      rawPropertyValue(raw, "velocityAtEpoch"),
       "m/s",
       `${path}.velocityAtEpoch`,
       issues,
@@ -1599,7 +2252,19 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       positionAtEpoch !== undefined &&
       velocityAtEpoch !== undefined
     ) {
-      systems.push(Object.freeze({ id, designation, name, positionAtEpoch, velocityAtEpoch }));
+      const metadata = normalizeEntityProvenance(
+        raw,
+        "system",
+        id,
+        designation,
+        name,
+        CORE_SYSTEM_PROPERTIES,
+        path,
+        issues,
+      );
+      systems.push(
+        Object.freeze({ id, designation, name, positionAtEpoch, velocityAtEpoch, ...metadata }),
+      );
     }
   }
 
@@ -1621,15 +2286,22 @@ export function compileScenario(input: unknown): CompileScenarioResult {
     const idValue = readIdentifier(raw, "id", `${path}.id`, issues, "orbital-anchor", undefined);
     const id = registerId(idValue, `${path}.id`, "orbital-anchor", seenIds, issues);
     const designation = readText(
-      raw,
+      { ...raw, designation: rawPropertyValue(raw, "designation") },
       "designation",
       `${path}.designation`,
       issues,
       "orbital-anchor",
       idValue,
     );
-    const name = readText(raw, "name", `${path}.name`, issues, "orbital-anchor", idValue);
-    const kind = raw.kind;
+    const name = readText(
+      { ...raw, name: rawPropertyValue(raw, "name") },
+      "name",
+      `${path}.name`,
+      issues,
+      "orbital-anchor",
+      idValue,
+    );
+    const kind = rawPropertyValue(raw, "kind");
     if (kind !== "star" && kind !== "planet" && kind !== "moon" && kind !== "barycenter") {
       addIssue(
         issues,
@@ -1641,8 +2313,13 @@ export function compileScenario(input: unknown): CompileScenarioResult {
         undefined,
       );
     }
+    const referenceRecord = {
+      ...raw,
+      systemId: rawPropertyValue(raw, "systemId"),
+      parentId: rawPropertyValue(raw, "parentId"),
+    };
     const systemIdValue = readRequiredReference(
-      raw,
+      referenceRecord,
       "systemId",
       `${path}.systemId`,
       issues,
@@ -1650,7 +2327,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       idValue,
     );
     const parentIdValue = readNullableReference(
-      raw,
+      referenceRecord,
       "parentId",
       `${path}.parentId`,
       issues,
@@ -1658,7 +2335,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       idValue,
     );
     const positionAtEpoch = readVector(
-      raw.positionAtEpoch,
+      rawPropertyValue(raw, "positionAtEpoch"),
       "m",
       `${path}.positionAtEpoch`,
       issues,
@@ -1666,15 +2343,24 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       idValue,
     ) as PositionVector | undefined;
     const velocityAtEpoch = readVector(
-      raw.velocityAtEpoch,
+      rawPropertyValue(raw, "velocityAtEpoch"),
       "m/s",
       `${path}.velocityAtEpoch`,
       issues,
       "orbital-anchor",
       idValue,
     ) as VelocityVector | undefined;
-    const orbitalElements = readOrbitalElements(raw, path, issues, "orbital-anchor", idValue);
-
+    const orbitalElements = readOrbitalElements(
+      {
+        ...raw,
+        orbitalElements: rawPropertyValue(raw, "orbitalElements"),
+        orbit: rawPropertyValue(raw, "orbit"),
+      },
+      path,
+      issues,
+      "orbital-anchor",
+      idValue,
+    );
     if (
       id !== undefined &&
       designation !== undefined &&
@@ -1684,6 +2370,16 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       positionAtEpoch !== undefined &&
       velocityAtEpoch !== undefined
     ) {
+      const metadata = normalizeEntityProvenance(
+        raw,
+        "orbital-anchor",
+        id,
+        designation,
+        name,
+        CORE_ANCHOR_PROPERTIES,
+        path,
+        issues,
+      );
       anchors.push(
         Object.freeze({
           id,
@@ -1695,6 +2391,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
           positionAtEpoch,
           velocityAtEpoch,
           orbitalElements,
+          ...metadata,
         }),
       );
     }
@@ -1718,16 +2415,28 @@ export function compileScenario(input: unknown): CompileScenarioResult {
     const idValue = readIdentifier(raw, "id", `${path}.id`, issues, "gate", undefined);
     const id = registerId(idValue, `${path}.id`, "gate", seenIds, issues);
     const designation = readText(
-      raw,
+      { ...raw, designation: rawPropertyValue(raw, "designation") },
       "designation",
       `${path}.designation`,
       issues,
       "gate",
       idValue,
     );
-    const name = readText(raw, "name", `${path}.name`, issues, "gate", idValue);
+    const name = readText(
+      { ...raw, name: rawPropertyValue(raw, "name") },
+      "name",
+      `${path}.name`,
+      issues,
+      "gate",
+      idValue,
+    );
+    const referenceRecord = {
+      ...raw,
+      systemId: rawPropertyValue(raw, "systemId"),
+      orbitalAnchorId: rawPropertyValue(raw, "orbitalAnchorId"),
+    };
     const systemIdValue = readRequiredReference(
-      raw,
+      referenceRecord,
       "systemId",
       `${path}.systemId`,
       issues,
@@ -1735,7 +2444,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       idValue,
     );
     const orbitalAnchorIdValue = readRequiredReference(
-      raw,
+      referenceRecord,
       "orbitalAnchorId",
       `${path}.orbitalAnchorId`,
       issues,
@@ -1743,7 +2452,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       idValue,
     );
     const positionAtEpoch = readVector(
-      raw.positionAtEpoch,
+      rawPropertyValue(raw, "positionAtEpoch"),
       "m",
       `${path}.positionAtEpoch`,
       issues,
@@ -1751,15 +2460,24 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       idValue,
     ) as PositionVector | undefined;
     const velocityAtEpoch = readVector(
-      raw.velocityAtEpoch,
+      rawPropertyValue(raw, "velocityAtEpoch"),
       "m/s",
       `${path}.velocityAtEpoch`,
       issues,
       "gate",
       idValue,
     ) as VelocityVector | undefined;
-    const orbitalElements = readOrbitalElements(raw, path, issues, "gate", idValue);
-
+    const orbitalElements = readOrbitalElements(
+      {
+        ...raw,
+        orbitalElements: rawPropertyValue(raw, "orbitalElements"),
+        orbit: rawPropertyValue(raw, "orbit"),
+      },
+      path,
+      issues,
+      "gate",
+      idValue,
+    );
     if (
       id !== undefined &&
       designation !== undefined &&
@@ -1769,6 +2487,16 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       positionAtEpoch !== undefined &&
       velocityAtEpoch !== undefined
     ) {
+      const metadata = normalizeEntityProvenance(
+        raw,
+        "gate",
+        id,
+        designation,
+        name,
+        CORE_GATE_PROPERTIES,
+        path,
+        issues,
+      );
       gates.push(
         Object.freeze({
           id,
@@ -1779,6 +2507,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
           positionAtEpoch,
           velocityAtEpoch,
           orbitalElements,
+          ...metadata,
         }),
       );
     }
@@ -1802,16 +2531,28 @@ export function compileScenario(input: unknown): CompileScenarioResult {
     const idValue = readIdentifier(raw, "id", `${path}.id`, issues, "gate-connection", undefined);
     const id = registerId(idValue, `${path}.id`, "gate-connection", seenIds, issues);
     const designation = readText(
-      raw,
+      { ...raw, designation: rawPropertyValue(raw, "designation") },
       "designation",
       `${path}.designation`,
       issues,
       "gate-connection",
       idValue,
     );
-    const name = readText(raw, "name", `${path}.name`, issues, "gate-connection", idValue);
+    const name = readText(
+      { ...raw, name: rawPropertyValue(raw, "name") },
+      "name",
+      `${path}.name`,
+      issues,
+      "gate-connection",
+      idValue,
+    );
+    const referenceRecord = {
+      ...raw,
+      gateAId: rawPropertyValue(raw, "gateAId"),
+      gateBId: rawPropertyValue(raw, "gateBId"),
+    };
     const gateAIdValue = readRequiredReference(
-      raw,
+      referenceRecord,
       "gateAId",
       `${path}.gateAId`,
       issues,
@@ -1819,7 +2560,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       idValue,
     );
     const gateBIdValue = readRequiredReference(
-      raw,
+      referenceRecord,
       "gateBId",
       `${path}.gateBId`,
       issues,
@@ -1834,6 +2575,16 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       gateAIdValue !== undefined &&
       gateBIdValue !== undefined
     ) {
+      const metadata = normalizeEntityProvenance(
+        raw,
+        "gate-connection",
+        id,
+        designation,
+        name,
+        CORE_CONNECTION_PROPERTIES,
+        path,
+        issues,
+      );
       connections.push(
         Object.freeze({
           id,
@@ -1841,6 +2592,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
           name,
           gateAId: asStableId(gateAIdValue),
           gateBId: asStableId(gateBIdValue),
+          ...metadata,
         }),
       );
     }
@@ -1864,16 +2616,23 @@ export function compileScenario(input: unknown): CompileScenarioResult {
     const idValue = readIdentifier(raw, "id", `${path}.id`, issues, "ship-profile", undefined);
     const id = registerId(idValue, `${path}.id`, "ship-profile", seenIds, issues);
     const designation = readText(
-      raw,
+      { ...raw, designation: rawPropertyValue(raw, "designation") },
       "designation",
       `${path}.designation`,
       issues,
       "ship-profile",
       idValue,
     );
-    const name = readText(raw, "name", `${path}.name`, issues, "ship-profile", idValue);
+    const name = readText(
+      { ...raw, name: rawPropertyValue(raw, "name") },
+      "name",
+      `${path}.name`,
+      issues,
+      "ship-profile",
+      idValue,
+    );
     const acceleration = readPositiveQuantity(
-      raw.acceleration,
+      rawPropertyValue(raw, "acceleration"),
       "m/s^2",
       `${path}.acceleration`,
       issues,
@@ -1881,7 +2640,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       idValue,
     ) as MetersPerSecondSquared | undefined;
     const brakingAcceleration = readPositiveQuantity(
-      raw.brakingAcceleration,
+      rawPropertyValue(raw, "brakingAcceleration"),
       "m/s^2",
       `${path}.brakingAcceleration`,
       issues,
@@ -1889,13 +2648,14 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       idValue,
     ) as MetersPerSecondSquared | undefined;
     const maximumSublightSpeed = readMaximumSublightSpeed(
-      raw.maximumSublightSpeed,
+      rawPropertyValue(raw, "maximumSublightSpeed"),
       `${path}.maximumSublightSpeed`,
       issues,
       idValue,
     );
+    const booleanRecord = { ...raw, hasZpzGenerator: rawPropertyValue(raw, "hasZpzGenerator") };
     const hasZpzGenerator = readBoolean(
-      raw,
+      booleanRecord,
       "hasZpzGenerator",
       `${path}.hasZpzGenerator`,
       issues,
@@ -1912,6 +2672,16 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       maximumSublightSpeed !== undefined &&
       hasZpzGenerator !== undefined
     ) {
+      const metadata = normalizeEntityProvenance(
+        raw,
+        "ship-profile",
+        id,
+        designation,
+        name,
+        CORE_SHIP_PROPERTIES,
+        path,
+        issues,
+      );
       shipProfiles.push(
         Object.freeze({
           id,
@@ -1921,6 +2691,7 @@ export function compileScenario(input: unknown): CompileScenarioResult {
           brakingAcceleration,
           maximumSublightSpeed,
           hasZpzGenerator,
+          ...metadata,
         }),
       );
     }
@@ -1935,6 +2706,18 @@ export function compileScenario(input: unknown): CompileScenarioResult {
     return failure(issues);
   }
 
+  const scenarioMetadata = normalizeEntityProvenance(
+    input,
+    "scenario",
+    scenarioId,
+    scenarioDesignation,
+    scenarioName,
+    ["designation", "name", "epoch"],
+    "scenario",
+    issues,
+  );
+  const canonicalClaims = compileScenarioClaims(input, issues);
+  const overrideLayers = compileScenarioOverrides(input, issues);
   const sortedSystems = sortById(systems);
   const sortedAnchors = sortById(anchors);
   const sortedGates = sortById(gates);
@@ -1953,16 +2736,42 @@ export function compileScenario(input: unknown): CompileScenarioResult {
     return failure(issues);
   }
 
+  const immutableSystems = freezeList(sortedSystems);
+  const immutableAnchors = freezeList(sortedAnchors);
+  const immutableGates = freezeList(sortedGates);
+  const immutableConnections = freezeList(sortedConnections);
+  const immutableShipProfiles = freezeList(sortedShipProfiles);
+  const entityProvenance = [
+    ...immutableSystems,
+    ...immutableAnchors,
+    ...immutableGates,
+    ...immutableConnections,
+    ...immutableShipProfiles,
+  ];
+  const uncertainty = scenarioUncertainty(
+    scenarioMetadata.properties,
+    entityProvenance,
+    canonicalClaims,
+  );
   const compiled: CompiledScenario = Object.freeze({
     id: scenarioId,
     designation: scenarioDesignation,
     name: scenarioName,
     epoch,
-    systems: freezeList(sortedSystems),
-    orbitalAnchors: freezeList(sortedAnchors),
-    gates: freezeList(sortedGates),
-    gateConnections: freezeList(sortedConnections),
-    shipProfiles: freezeList(sortedShipProfiles),
+    systems: immutableSystems,
+    orbitalAnchors: immutableAnchors,
+    gates: immutableGates,
+    gateConnections: immutableConnections,
+    shipProfiles: immutableShipProfiles,
+    canonicalIdentity: scenarioMetadata.canonicalIdentity,
+    provenance: scenarioMetadata.provenance,
+    properties: scenarioMetadata.properties,
+    propertyProvenance: scenarioMetadata.propertyProvenance,
+    canonicalClaims,
+    overrideLayers: Object.freeze([]),
+    overrides: Object.freeze([]),
+    uncertainty,
+    overrideBase: undefined,
     index: Object.freeze({
       systems: createEntityIndex(sortedSystems),
       orbitalAnchors: createEntityIndex(sortedAnchors),
@@ -1971,8 +2780,642 @@ export function compileScenario(input: unknown): CompileScenarioResult {
       shipProfiles: createEntityIndex(sortedShipProfiles),
     }),
   });
+  let scenarioWithOverrides: CompiledScenario;
+  try {
+    scenarioWithOverrides =
+      overrideLayers.length === 0 ? compiled : applyScenarioOverrides(compiled, overrideLayers);
+  } catch (error) {
+    addIssue(
+      issues,
+      "invalid-override",
+      "overrides",
+      error instanceof Error ? error.message : "overrides reference an invalid Scenario property.",
+      "scenario",
+      scenarioId,
+      undefined,
+    );
+    return failure(issues);
+  }
 
-  return Object.freeze({ ok: true as const, scenario: compiled, issues: [] as const });
+  return Object.freeze({ ok: true as const, scenario: scenarioWithOverrides, issues: [] as const });
+}
+
+function entityCollection(
+  scenario: CompiledScenario,
+  entityType: string,
+):
+  | readonly (
+      | CompiledSystem
+      | CompiledOrbitalAnchor
+      | CompiledGate
+      | CompiledGateConnection
+      | CompiledShipProfile
+    )[]
+  | undefined {
+  switch (entityType) {
+    case "system":
+      return scenario.systems;
+    case "orbital-anchor":
+      return scenario.orbitalAnchors;
+    case "gate":
+      return scenario.gates;
+    case "gate-connection":
+      return scenario.gateConnections;
+    case "ship-profile":
+      return scenario.shipProfiles;
+    default:
+      return undefined;
+  }
+}
+
+function supportedOverrideProperties(entityType: string): readonly string[] | undefined {
+  if (!Object.prototype.hasOwnProperty.call(SUPPORTED_OVERRIDE_PROPERTIES, entityType)) {
+    return undefined;
+  }
+  return SUPPORTED_OVERRIDE_PROPERTIES[entityType as DomainEntityType];
+}
+
+function normalizeOverrideProperty(property: string): string {
+  if (typeof property !== "string") {
+    throw new RangeError("Override property must be a supported property name.");
+  }
+  const name = property.startsWith("properties.") ? property.slice("properties.".length) : property;
+  if (name.length === 0 || name.includes(".")) {
+    throw new RangeError(`Override property ${JSON.stringify(property)} is not supported.`);
+  }
+  return name;
+}
+
+function normalizeOverrideChangeForScenario(
+  scenario: CompiledScenario,
+  change: ScenarioOverrideChange,
+): ScenarioOverrideChange {
+  if (!stableIdentifierPattern.test(change.entityId)) {
+    throw new RangeError(
+      `Override ${change.property} requires a stable entity identifier, received ${JSON.stringify(change.entityId)}.`,
+    );
+  }
+  const property = normalizeOverrideProperty(change.property);
+  const supported = supportedOverrideProperties(change.entityType);
+  if (supported === undefined || !supported.includes(property)) {
+    throw new RangeError(`Override property ${change.entityType}.${property} is not supported.`);
+  }
+  if (change.entityType === "scenario") {
+    if (change.entityId !== scenario.id) {
+      throw new RangeError(
+        `Override ${change.property} references Scenario ${change.entityId}, not ${scenario.id}.`,
+      );
+    }
+  } else {
+    const collection = entityCollection(scenario, change.entityType);
+    if (collection === undefined) {
+      throw new RangeError(`Unsupported override entity type ${change.entityType}.`);
+    }
+    if (!collection.some((entity) => entity.id === change.entityId)) {
+      throw new RangeError(
+        `Override ${change.property} references missing ${change.entityType} ${change.entityId}.`,
+      );
+    }
+  }
+  const normalizedValue = normalizeOverridePropertyValue(
+    scenario,
+    change.entityType as DomainEntityType,
+    change.entityId as StableId,
+    property,
+    change.value,
+  );
+  return Object.freeze({ ...change, value: normalizedValue });
+}
+
+function normalizeOverridePropertyValue(
+  scenario: CompiledScenario,
+  entityType: DomainEntityType,
+  entityId: StableId,
+  property: string,
+  value: unknown,
+): unknown {
+  const path = `${entityType}.${entityId}.${property}`;
+  switch (entityType) {
+    case "scenario":
+      if (property === "designation" || property === "name") {
+        return normalizeOverrideText(value, path);
+      }
+      if (property === "epoch") {
+        return normalizeOverrideEpoch(value, path);
+      }
+      break;
+    case "system":
+      if (property === "designation" || property === "name") {
+        return normalizeOverrideText(value, path);
+      }
+      if (property === "positionAtEpoch") {
+        return normalizeOverrideVector(value, "m", path, entityType, entityId);
+      }
+      if (property === "velocityAtEpoch") {
+        return normalizeOverrideVector(value, "m/s", path, entityType, entityId);
+      }
+      break;
+    case "orbital-anchor":
+      if (property === "designation" || property === "name") {
+        return normalizeOverrideText(value, path);
+      }
+      if (property === "kind") {
+        return normalizeOverrideAnchorKind(value, path);
+      }
+      if (property === "systemId") {
+        return normalizeOverrideReference(value, path, scenario.index.systems.has);
+      }
+      if (property === "parentId") {
+        return normalizeOptionalOverrideReference(value, path, scenario.index.orbitalAnchors.has);
+      }
+      if (property === "positionAtEpoch") {
+        return normalizeOverrideVector(value, "m", path, entityType, entityId);
+      }
+      if (property === "velocityAtEpoch") {
+        return normalizeOverrideVector(value, "m/s", path, entityType, entityId);
+      }
+      if (property === "orbitalElements") {
+        return normalizeOverrideOrbitalElements(value, path, entityType, entityId);
+      }
+      break;
+    case "gate":
+      if (property === "designation" || property === "name") {
+        return normalizeOverrideText(value, path);
+      }
+      if (property === "systemId") {
+        return normalizeOverrideReference(value, path, scenario.index.systems.has);
+      }
+      if (property === "orbitalAnchorId") {
+        return normalizeOverrideReference(value, path, scenario.index.orbitalAnchors.has);
+      }
+      if (property === "positionAtEpoch") {
+        return normalizeOverrideVector(value, "m", path, entityType, entityId);
+      }
+      if (property === "velocityAtEpoch") {
+        return normalizeOverrideVector(value, "m/s", path, entityType, entityId);
+      }
+      if (property === "orbitalElements") {
+        return normalizeOverrideOrbitalElements(value, path, entityType, entityId);
+      }
+      break;
+    case "gate-connection":
+      if (property === "designation" || property === "name") {
+        return normalizeOverrideText(value, path);
+      }
+      if (property === "gateAId" || property === "gateBId") {
+        return normalizeOverrideReference(value, path, scenario.index.gates.has);
+      }
+      break;
+    case "ship-profile":
+      if (property === "designation" || property === "name") {
+        return normalizeOverrideText(value, path);
+      }
+      if (property === "acceleration" || property === "brakingAcceleration") {
+        return normalizeOverridePositiveQuantity(value, "m/s^2", path, entityType, entityId);
+      }
+      if (property === "maximumSublightSpeed") {
+        return normalizeOverrideMaximumSublightSpeed(value, path, entityId);
+      }
+      if (property === "hasZpzGenerator") {
+        if (typeof value !== "boolean") {
+          throw new RangeError(`${path} must be a boolean.`);
+        }
+        return value;
+      }
+      break;
+  }
+  throw new RangeError(`Override property ${entityType}.${property} is not supported.`);
+}
+
+function normalizeOverrideText(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new RangeError(`${path} must be a non-empty string.`);
+  }
+  return value;
+}
+
+function normalizeOverrideAnchorKind(value: unknown, path: string): OrbitalAnchorKind {
+  if (value === "star" || value === "planet" || value === "moon" || value === "barycenter") {
+    return value;
+  }
+  throw new RangeError(`${path} must be a supported Orbital Anchor kind.`);
+}
+
+function normalizeOverrideReference(
+  value: unknown,
+  path: string,
+  hasReference: (id: StableId) => boolean,
+): StableId {
+  if (typeof value !== "string" || !stableIdentifierPattern.test(value)) {
+    throw new RangeError(`${path} must be a stable identifier string.`);
+  }
+  const id = value as StableId;
+  if (!hasReference(id)) {
+    throw new RangeError(`${path} references missing entity ${value}.`);
+  }
+  return id;
+}
+
+function normalizeOptionalOverrideReference(
+  value: unknown,
+  path: string,
+  hasReference: (id: StableId) => boolean,
+): StableId | undefined {
+  return value === undefined ? undefined : normalizeOverrideReference(value, path, hasReference);
+}
+
+function normalizeOverrideVector<Unit extends SIUnit>(
+  value: unknown,
+  expectedUnit: Unit,
+  path: string,
+  entityType: DomainEntityType,
+  entityId: StableId,
+): Vector3<Unit> {
+  const issues: ValidationIssue[] = [];
+  const parsed = readVector(value, expectedUnit, path, issues, entityType, entityId);
+  if (parsed === undefined) {
+    throwOverrideValidationError(path, issues);
+  }
+  return parsed;
+}
+
+function normalizeOverridePositiveQuantity<Unit extends SIUnit>(
+  value: unknown,
+  expectedUnit: Unit,
+  path: string,
+  entityType: DomainEntityType,
+  entityId: StableId,
+): SIQuantity<Unit> {
+  const issues: ValidationIssue[] = [];
+  const parsed = readPositiveQuantity(value, expectedUnit, path, issues, entityType, entityId);
+  if (parsed === undefined) {
+    throwOverrideValidationError(path, issues);
+  }
+  return parsed;
+}
+
+function normalizeOverrideMaximumSublightSpeed(
+  value: unknown,
+  path: string,
+  entityId: StableId,
+): MetersPerSecond {
+  const issues: ValidationIssue[] = [];
+  const parsed = readMaximumSublightSpeed(value, path, issues, entityId);
+  if (parsed === undefined) {
+    throwOverrideValidationError(path, issues);
+  }
+  return parsed;
+}
+
+function normalizeOverrideEpoch(value: unknown, path: string): ScenarioEpoch {
+  const issues: ValidationIssue[] = [];
+  const parsed = readEpoch({ epoch: value }, issues);
+  if (parsed === undefined) {
+    throwOverrideValidationError(path, issues);
+  }
+  return parsed;
+}
+
+function normalizeOverrideOrbitalElements(
+  value: unknown,
+  path: string,
+  entityType: DomainEntityType,
+  entityId: StableId,
+): CompiledKeplerianOrbit | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const issues: ValidationIssue[] = [];
+  const parsed = readOrbitalElements(
+    { orbitalElements: value },
+    path,
+    issues,
+    entityType,
+    entityId,
+  );
+  if (parsed === undefined || issues.length > 0) {
+    throwOverrideValidationError(path, issues);
+  }
+  return parsed;
+}
+
+function throwOverrideValidationError(path: string, issues: readonly ValidationIssue[]): never {
+  throw new RangeError(issues[0]?.message ?? `${path} is invalid.`);
+}
+
+function validateCompiledScenarioInvariants(scenario: CompiledScenario): void {
+  const issues: ValidationIssue[] = [];
+  const systems = new Map(scenario.systems.map((system) => [system.id, system]));
+  const anchors = new Map(scenario.orbitalAnchors.map((anchor) => [anchor.id, anchor]));
+  validateStationarySystems(scenario.systems, issues);
+  validateAnchorReferences(scenario.orbitalAnchors, systems, issues);
+  validateGateReferences(scenario.gates, systems, anchors, issues);
+  validateGateConnections(scenario.gates, scenario.gateConnections, issues);
+  const issue = issues[0];
+  if (issue !== undefined) {
+    throw new RangeError(issue.message);
+  }
+}
+
+function replaceEntityProperty(
+  entity:
+    | CompiledSystem
+    | CompiledOrbitalAnchor
+    | CompiledGate
+    | CompiledGateConnection
+    | CompiledShipProfile,
+  change: import("./provenance").ScenarioOverrideChange,
+): typeof entity {
+  const property = change.property.startsWith("properties.")
+    ? change.property.slice("properties.".length)
+    : change.property;
+  const properties = {
+    ...entity.properties,
+    [property]: createPropertyMetadata(property, change.value, {
+      claim: change.claim,
+      provenance: change.provenance,
+    }),
+  };
+  const updated = change.property.startsWith("properties.")
+    ? entity
+    : { ...entity, [property]: change.value };
+  return Object.freeze({
+    ...updated,
+    properties: Object.freeze(properties),
+    propertyProvenance: Object.freeze(properties),
+  }) as typeof entity;
+}
+
+function replaceEntity(
+  scenario: CompiledScenario,
+  change: import("./provenance").ScenarioOverrideChange,
+): CompiledScenario {
+  if (change.entityType === "scenario") {
+    if (change.entityId !== scenario.id) {
+      throw new RangeError(
+        `Override ${change.property} references Scenario ${change.entityId}, not ${scenario.id}.`,
+      );
+    }
+    const property = change.property.startsWith("properties.")
+      ? change.property.slice("properties.".length)
+      : change.property;
+    const properties = {
+      ...scenario.properties,
+      [property]: createPropertyMetadata(property, change.value, {
+        claim: change.claim,
+        provenance: change.provenance,
+      }),
+    };
+    const updated = change.property.startsWith("properties.")
+      ? scenario
+      : { ...scenario, [property]: change.value };
+    return cloneCompiledScenario(updated as CompiledScenario, {
+      properties: Object.freeze(properties),
+      propertyProvenance: Object.freeze(properties),
+    });
+  }
+
+  const collection = entityCollection(scenario, change.entityType);
+  if (collection === undefined) {
+    throw new RangeError(`Unsupported override entity type ${change.entityType}.`);
+  }
+  const index = collection.findIndex((entity) => entity.id === change.entityId);
+  if (index < 0) {
+    throw new RangeError(
+      `Override ${change.property} references missing ${change.entityType} ${change.entityId}.`,
+    );
+  }
+  const entity = collection[index];
+  if (entity === undefined) {
+    throw new RangeError(`Override ${change.entityId} resolved to no entity.`);
+  }
+  const replacement = replaceEntityProperty(entity, change);
+  const replacements = [...collection];
+  replacements[index] = replacement;
+  const systems =
+    change.entityType === "system" ? (replacements as CompiledSystem[]) : scenario.systems;
+  const orbitalAnchors =
+    change.entityType === "orbital-anchor"
+      ? (replacements as CompiledOrbitalAnchor[])
+      : scenario.orbitalAnchors;
+  const gates = change.entityType === "gate" ? (replacements as CompiledGate[]) : scenario.gates;
+  const gateConnections =
+    change.entityType === "gate-connection"
+      ? (replacements as CompiledGateConnection[])
+      : scenario.gateConnections;
+  const shipProfiles =
+    change.entityType === "ship-profile"
+      ? (replacements as CompiledShipProfile[])
+      : scenario.shipProfiles;
+  return cloneCompiledScenario(scenario, {
+    systems,
+    orbitalAnchors,
+    gates,
+    gateConnections,
+    shipProfiles,
+  });
+}
+
+function cloneCompiledScenario(
+  scenario: CompiledScenario,
+  replacements: {
+    readonly systems?: readonly CompiledSystem[];
+    readonly orbitalAnchors?: readonly CompiledOrbitalAnchor[];
+    readonly gates?: readonly CompiledGate[];
+    readonly gateConnections?: readonly CompiledGateConnection[];
+    readonly shipProfiles?: readonly CompiledShipProfile[];
+    readonly properties?: Readonly<Record<string, PropertyMetadata<unknown>>>;
+    readonly propertyProvenance?: Readonly<Record<string, PropertyMetadata<unknown>>>;
+    readonly overrideLayers?: readonly ScenarioOverrideLayer[];
+    readonly overrideBase?: CompiledScenario | undefined;
+  },
+): CompiledScenario {
+  const systems = replacements.systems ?? scenario.systems;
+  const orbitalAnchors = replacements.orbitalAnchors ?? scenario.orbitalAnchors;
+  const gates = replacements.gates ?? scenario.gates;
+  const gateConnections = replacements.gateConnections ?? scenario.gateConnections;
+  const shipProfiles = replacements.shipProfiles ?? scenario.shipProfiles;
+  const properties = replacements.properties ?? scenario.properties;
+  const entities = [...systems, ...orbitalAnchors, ...gates, ...gateConnections, ...shipProfiles];
+  const uncertainty = scenarioUncertainty(properties, entities, scenario.canonicalClaims);
+  return Object.freeze({
+    ...scenario,
+    systems: freezeList(systems),
+    orbitalAnchors: freezeList(orbitalAnchors),
+    gates: freezeList(gates),
+    gateConnections: freezeList(gateConnections),
+    shipProfiles: freezeList(shipProfiles),
+    properties,
+    propertyProvenance: replacements.propertyProvenance ?? properties,
+    overrideLayers: Object.freeze(replacements.overrideLayers ?? scenario.overrideLayers),
+    overrides: Object.freeze(replacements.overrideLayers ?? scenario.overrideLayers),
+    uncertainty,
+    overrideBase:
+      replacements.overrideBase === undefined ? scenario.overrideBase : replacements.overrideBase,
+    index: Object.freeze({
+      systems: createEntityIndex(systems),
+      orbitalAnchors: createEntityIndex(orbitalAnchors),
+      gates: createEntityIndex(gates),
+      gateConnections: createEntityIndex(gateConnections),
+      shipProfiles: createEntityIndex(shipProfiles),
+    }),
+  });
+}
+
+function deepEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  if (typeof left !== typeof right || left === null || right === null) {
+    return false;
+  }
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length && left.every((value, index) => deepEqual(value, right[index]))
+    );
+  }
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key) =>
+          Object.prototype.hasOwnProperty.call(right, key) && deepEqual(left[key], right[key]),
+      )
+    );
+  }
+  return false;
+}
+
+function scenarioPropertyValue(
+  scenario: CompiledScenario,
+  change: {
+    readonly entityType: string;
+    readonly entityId: string;
+    readonly property: string;
+  },
+): unknown {
+  if (change.entityType === "scenario") {
+    if (change.entityId !== scenario.id) {
+      return undefined;
+    }
+    return change.property.startsWith("properties.")
+      ? scenario.properties[change.property.slice("properties.".length)]?.value
+      : scenario[change.property as keyof CompiledScenario];
+  }
+  const entity = entityCollection(scenario, change.entityType)?.find(
+    (candidate) => candidate.id === change.entityId,
+  );
+  if (entity === undefined) {
+    return undefined;
+  }
+  return change.property.startsWith("properties.")
+    ? entity.properties[change.property.slice("properties.".length)]?.value
+    : entity[change.property as keyof typeof entity];
+}
+
+/**
+ * Applies ordered immutable Scenario override layers.
+ *
+ * Later layers win for the same property, while the original compiled Scenario remains available
+ * through the returned Scenario's override base for safe reversion.
+ *
+ * @param scenario - The immutable Scenario to overlay.
+ * @param layers - Ordered override layers to apply.
+ * @returns A new immutable Scenario containing the effective values and layer history.
+ */
+export function applyScenarioOverrides(
+  scenario: CompiledScenario,
+  layers: readonly ScenarioOverrideLayerInput[],
+): CompiledScenario {
+  if (!Array.isArray(layers)) {
+    throw new RangeError("Scenario overrides must be supplied as an array of layers.");
+  }
+  const normalizedLayers = layers.map((layer) => createScenarioOverrideLayer(layer));
+  const knownLayerIds = new Set(scenario.overrideLayers.map((layer) => layer.id));
+  for (const layer of normalizedLayers) {
+    if (knownLayerIds.has(layer.id)) {
+      throw new RangeError(`Override layer ${layer.id} is already active in the Scenario.`);
+    }
+    knownLayerIds.add(layer.id);
+  }
+  const base = scenario.overrideBase ?? scenario;
+  let current = scenario;
+  const effectiveLayers: ScenarioOverrideLayer[] = [];
+  for (const layer of normalizedLayers) {
+    const effectiveChanges: ScenarioOverrideChange[] = [];
+    for (const change of layer.changes) {
+      const normalizedChange = normalizeOverrideChangeForScenario(current, change);
+      current = replaceEntity(current, normalizedChange);
+      effectiveChanges.push(normalizedChange);
+    }
+    effectiveLayers.push(
+      Object.freeze({
+        ...layer,
+        changes: Object.freeze(effectiveChanges),
+      }),
+    );
+  }
+  validateCompiledScenarioInvariants(current);
+  const allLayers = Object.freeze([...scenario.overrideLayers, ...effectiveLayers]);
+  return cloneCompiledScenario(current, {
+    overrideLayers: allLayers,
+    overrideBase: base,
+  });
+}
+
+/**
+ * Compares effective Scenario values before and after an override operation.
+ *
+ * @param before - The original compiled Scenario.
+ * @param after - The overridden compiled Scenario.
+ * @returns Immutable property-level changes in layer order.
+ */
+export function compareScenarioOverrides(
+  before: CompiledScenario,
+  after: CompiledScenario,
+): readonly import("./provenance").OverrideChangeComparison[] {
+  const comparisons: import("./provenance").OverrideChangeComparison[] = [];
+  for (const layer of after.overrideLayers) {
+    for (const change of layer.changes) {
+      const beforeValue = scenarioPropertyValue(before, change);
+      const afterValue = scenarioPropertyValue(after, change);
+      comparisons.push(
+        Object.freeze({
+          layerId: layer.id,
+          entityType: change.entityType,
+          entityId: change.entityId,
+          property: change.property,
+          before: beforeValue,
+          after: afterValue,
+          changed: !deepEqual(beforeValue, afterValue),
+          provenance: change.provenance,
+        }),
+      );
+    }
+  }
+  return Object.freeze(comparisons);
+}
+
+/**
+ * Reverts one override layer and reapplies any remaining layers in their original order.
+ *
+ * @param scenario - A Scenario returned by {@link applyScenarioOverrides}.
+ * @param layerId - The layer identifier to remove.
+ * @returns A new immutable Scenario with the selected layer absent.
+ * @throws RangeError when the layer is not active.
+ */
+export function revertScenarioOverride(
+  scenario: CompiledScenario,
+  layerId: string,
+): CompiledScenario {
+  if (!scenario.overrideLayers.some((layer) => layer.id === layerId)) {
+    throw new RangeError(`Override layer ${layerId} is not active in the Scenario.`);
+  }
+  const base = scenario.overrideBase ?? scenario;
+  const remaining = scenario.overrideLayers.filter((layer) => layer.id !== layerId);
+  return remaining.length === 0 ? base : applyScenarioOverrides(base, remaining);
 }
 
 /**
@@ -2145,5 +3588,8 @@ export function createJourneyModel(): JourneyModel {
     simulateJourney,
     simulateMultiLegJourney,
     simulateInSystemTransfer,
+    applyScenarioOverrides,
+    compareScenarioOverrides,
+    revertScenarioOverride,
   });
 }

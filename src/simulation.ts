@@ -28,9 +28,22 @@ import type {
   CompiledScenario,
   DomainEntityType,
   GateWorldline,
+  ScenarioCanonicalClaim,
+  ScenarioUncertainty,
   StableId,
   WorldlineIssue,
 } from "./model";
+import {
+  compareCanonicalClaim,
+  conservativeBounds,
+  createDisplayPrecision,
+  derivedResult,
+  exactBounds,
+  type CanonDiscrepancy,
+  type CanonicalClaim,
+  type ConservativeBounds,
+  type DisplayPrecision,
+} from "./provenance";
 
 const stableIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const FIXED_CRUISE_BETA = 0.999;
@@ -110,6 +123,32 @@ export type JourneyClockReading = {
 };
 
 /**
+ * Conservative lower and upper readings for the three Journey clocks.
+ */
+export type JourneyClockBounds = {
+  readonly nominal: JourneyClockReading;
+  readonly lower: JourneyClockReading;
+  readonly upper: JourneyClockReading;
+  readonly lowerBound: JourneyClockReading;
+  readonly upperBound: JourneyClockReading;
+  readonly conservative: {
+    readonly lower: JourneyClockReading;
+    readonly upper: JourneyClockReading;
+  };
+};
+
+/**
+ * Conservative bounds for one Journey phase's durations and boundary clocks.
+ */
+export type JourneyPhaseBounds = {
+  readonly clusterCoordinateDuration: ConservativeBounds<Seconds>;
+  readonly shipProperDuration: ConservativeBounds<Seconds>;
+  readonly agingDifference: ConservativeBounds<Seconds>;
+  readonly start: JourneyClockBounds;
+  readonly end: JourneyClockBounds;
+};
+
+/**
  * A Journey event with cumulative Cluster Coordinate Time, Ship Proper Time, and Aging Difference.
  */
 export type JourneyTimelineEvent = {
@@ -131,6 +170,8 @@ export type JourneyPhase = {
   readonly agingDifference: Seconds;
   readonly start: JourneyClockReading;
   readonly end: JourneyClockReading;
+  readonly bounds: JourneyPhaseBounds;
+  readonly displayPrecision: DisplayPrecision;
 };
 
 /**
@@ -174,6 +215,11 @@ export type JourneyTimeline = {
   readonly totalClusterCoordinateTime: Seconds;
   readonly totalShipProperTime: Seconds;
   readonly totalAgingDifference: Seconds;
+  readonly totalBounds: JourneyClockBounds;
+  readonly bounds: JourneyClockBounds;
+  readonly clockBounds: JourneyClockBounds;
+  readonly displayPrecision: DisplayPrecision;
+  readonly discrepancies: readonly CanonDiscrepancy<Seconds>[];
 };
 
 /**
@@ -193,6 +239,11 @@ export type JourneyDwellTimeline = {
   readonly arrivalPosition: PositionVector;
   readonly arrivalVelocity: VelocityVector;
   readonly clocks: JourneyClockReading;
+  readonly durationBounds: ConservativeBounds<Seconds>;
+  readonly properDurationBounds: ConservativeBounds<Seconds>;
+  readonly agingDifferenceBounds: ConservativeBounds<Seconds>;
+  readonly bounds: JourneyClockBounds;
+  readonly displayPrecision: DisplayPrecision;
 };
 
 /**
@@ -218,6 +269,8 @@ export type MultiLegJourneyPhase = {
   readonly cruise: JourneyTimeline | undefined;
   readonly transfer: InSystemTransferTimeline | undefined;
   readonly dwell: JourneyDwellTimeline | undefined;
+  readonly bounds: JourneyPhaseBounds;
+  readonly displayPrecision: DisplayPrecision;
 };
 
 /**
@@ -262,6 +315,11 @@ export type MultiLegJourneyTimeline = {
   readonly phases: readonly MultiLegJourneyPhase[];
   readonly events: readonly MultiLegJourneyTimelineEvent[];
   readonly clocks: JourneyClockReading;
+  readonly totalBounds: JourneyClockBounds;
+  readonly bounds: JourneyClockBounds;
+  readonly clockBounds: JourneyClockBounds;
+  readonly displayPrecision: DisplayPrecision;
+  readonly discrepancies: readonly CanonDiscrepancy<Seconds>[];
 };
 
 /**
@@ -634,20 +692,229 @@ function clocks(clusterCoordinateTime: Seconds, shipProperTime: Seconds): Journe
   });
 }
 
+function exactClockBounds(reading: JourneyClockReading): JourneyClockBounds {
+  const cluster = conservativeBounds(
+    reading.clusterCoordinateTime,
+    reading.clusterCoordinateTime,
+    reading.clusterCoordinateTime,
+  );
+  const ship = conservativeBounds(
+    reading.shipProperTime,
+    reading.shipProperTime,
+    reading.shipProperTime,
+  );
+  const aging = conservativeBounds(
+    reading.agingDifference,
+    reading.agingDifference,
+    reading.agingDifference,
+  );
+  const lower = Object.freeze({
+    clusterCoordinateTime: cluster.lower,
+    shipProperTime: ship.lower,
+    agingDifference: aging.lower,
+  });
+  const upper = Object.freeze({
+    clusterCoordinateTime: cluster.upper,
+    shipProperTime: ship.upper,
+    agingDifference: aging.upper,
+  });
+  return Object.freeze({
+    nominal: reading,
+    lower,
+    upper,
+    lowerBound: lower,
+    upperBound: upper,
+    conservative: Object.freeze({ lower, upper }),
+  });
+}
+
+function uncertaintyPadding(value: number, uncertainty: ScenarioUncertainty): number {
+  if (
+    !uncertainty.hasUncertainty ||
+    (uncertainty.relativeFactor === 0 && uncertainty.absoluteSeconds === 0)
+  ) {
+    return 0;
+  }
+  return Math.abs(value) * uncertainty.relativeFactor + uncertainty.absoluteSeconds;
+}
+
+function uncertainSeconds(
+  value: Seconds,
+  uncertainty: ScenarioUncertainty,
+): ConservativeBounds<Seconds> {
+  if (value.value === 0) {
+    return exactBounds(value);
+  }
+  const padding = uncertaintyPadding(value.value, uncertainty);
+  const lower = Math.max(0, value.value - padding);
+  const upper = Math.max(lower, value.value + padding);
+  return conservativeBounds(value, seconds(lower), seconds(upper), uncertainty.displayPrecision);
+}
+
+function clockBounds(
+  reading: JourneyClockReading,
+  uncertainty: ScenarioUncertainty,
+): JourneyClockBounds {
+  const cluster = uncertainSeconds(reading.clusterCoordinateTime, uncertainty);
+  const ship = uncertainSeconds(reading.shipProperTime, uncertainty);
+  const agingLower = cluster.lower.value - ship.upper.value;
+  const agingUpper = cluster.upper.value - ship.lower.value;
+  const aging = conservativeBounds(
+    reading.agingDifference,
+    seconds(Math.min(reading.agingDifference.value, agingLower)),
+    seconds(Math.max(reading.agingDifference.value, agingUpper)),
+    uncertainty.displayPrecision,
+  );
+  const lower = Object.freeze({
+    clusterCoordinateTime: cluster.lower,
+    shipProperTime: ship.lower,
+    agingDifference: aging.lower,
+  });
+  const upper = Object.freeze({
+    clusterCoordinateTime: cluster.upper,
+    shipProperTime: ship.upper,
+    agingDifference: aging.upper,
+  });
+  return Object.freeze({
+    nominal: reading,
+    lower,
+    upper,
+    lowerBound: lower,
+    upperBound: upper,
+    conservative: Object.freeze({ lower, upper }),
+  });
+}
+
+function exactPhaseBounds(
+  start: JourneyClockReading,
+  end: JourneyClockReading,
+): JourneyPhaseBounds {
+  return Object.freeze({
+    clusterCoordinateDuration: conservativeBounds(
+      seconds(end.clusterCoordinateTime.value - start.clusterCoordinateTime.value),
+      seconds(end.clusterCoordinateTime.value - start.clusterCoordinateTime.value),
+      seconds(end.clusterCoordinateTime.value - start.clusterCoordinateTime.value),
+    ),
+    shipProperDuration: conservativeBounds(
+      seconds(end.shipProperTime.value - start.shipProperTime.value),
+      seconds(end.shipProperTime.value - start.shipProperTime.value),
+      seconds(end.shipProperTime.value - start.shipProperTime.value),
+    ),
+    agingDifference: conservativeBounds(
+      seconds(end.agingDifference.value - start.agingDifference.value),
+      seconds(end.agingDifference.value - start.agingDifference.value),
+      seconds(end.agingDifference.value - start.agingDifference.value),
+    ),
+    start: exactClockBounds(start),
+    end: exactClockBounds(end),
+  });
+}
+
+function boundedPhase(value: JourneyPhase, uncertainty: ScenarioUncertainty): JourneyPhase {
+  if (!uncertainty.hasUncertainty && value.displayPrecision.source === "default") {
+    return value;
+  }
+  const clusterNominal = value.clusterCoordinateDuration;
+  const shipNominal = value.shipProperDuration;
+  const agingNominal = value.agingDifference;
+  const cluster = uncertainSeconds(clusterNominal, uncertainty);
+  const ship = uncertainSeconds(shipNominal, uncertainty);
+  const agingLower = cluster.lower.value - ship.upper.value;
+  const agingUpper = cluster.upper.value - ship.lower.value;
+  const aging = conservativeBounds(
+    agingNominal,
+    seconds(Math.min(agingNominal.value, agingLower)),
+    seconds(Math.max(agingNominal.value, agingUpper)),
+    uncertainty.displayPrecision,
+  );
+  const bounds = Object.freeze({
+    clusterCoordinateDuration: cluster,
+    shipProperDuration: ship,
+    agingDifference: aging,
+    start: clockBounds(value.start, uncertainty),
+    end: clockBounds(value.end, uncertainty),
+  });
+  return Object.freeze({
+    ...value,
+    bounds,
+    displayPrecision: uncertainty.displayPrecision,
+  });
+}
+
+function journeyDiscrepancies(
+  claims: readonly ScenarioCanonicalClaim[],
+  departureGateId: StableId,
+  destinationGateId: StableId,
+  total: JourneyClockReading,
+  totalBounds: JourneyClockBounds,
+): readonly CanonDiscrepancy<Seconds>[] {
+  const subjects = new Set([
+    "journey",
+    `${departureGateId}->${destinationGateId}`,
+    `journey:${departureGateId}->${destinationGateId}`,
+  ]);
+  const discrepancies: CanonDiscrepancy<Seconds>[] = [];
+  for (const claimRecord of claims) {
+    if (!subjects.has(claimRecord.subject) || claimRecord.claim.kind === "qualitative") {
+      continue;
+    }
+    const property = claimRecord.property.toLowerCase();
+    const value =
+      property.includes("ship") || property.includes("proper")
+        ? total.shipProperTime
+        : property.includes("aging")
+          ? total.agingDifference
+          : total.clusterCoordinateTime;
+    const bounds =
+      property.includes("ship") || property.includes("proper")
+        ? conservativeBounds(
+            value,
+            totalBounds.lower.shipProperTime,
+            totalBounds.upper.shipProperTime,
+          )
+        : property.includes("aging")
+          ? conservativeBounds(
+              value,
+              totalBounds.lower.agingDifference,
+              totalBounds.upper.agingDifference,
+            )
+          : conservativeBounds(
+              value,
+              totalBounds.lower.clusterCoordinateTime,
+              totalBounds.upper.clusterCoordinateTime,
+            );
+    const result = derivedResult(value, bounds);
+    const discrepancy = compareCanonicalClaim(
+      claimRecord.property,
+      claimRecord.claim as CanonicalClaim<Seconds>,
+      result,
+    );
+    if (discrepancy !== undefined) {
+      discrepancies.push(discrepancy);
+    }
+  }
+  return Object.freeze(discrepancies);
+}
+
 function phase(
   kind: JourneyPhaseKind,
   start: JourneyClockReading,
   end: JourneyClockReading,
 ): JourneyPhase {
+  const clusterCoordinateDuration = seconds(
+    end.clusterCoordinateTime.value - start.clusterCoordinateTime.value,
+  );
+  const shipProperDuration = seconds(end.shipProperTime.value - start.shipProperTime.value);
+  const agingDifference = seconds(end.agingDifference.value - start.agingDifference.value);
   return Object.freeze({
     kind,
-    clusterCoordinateDuration: seconds(
-      end.clusterCoordinateTime.value - start.clusterCoordinateTime.value,
-    ),
-    shipProperDuration: seconds(end.shipProperTime.value - start.shipProperTime.value),
-    agingDifference: seconds(end.agingDifference.value - start.agingDifference.value),
+    clusterCoordinateDuration,
+    shipProperDuration,
+    agingDifference,
     start,
     end,
+    bounds: exactPhaseBounds(start, end),
+    displayPrecision: createDisplayPrecision({}, "default"),
   });
 }
 
@@ -920,6 +1187,8 @@ function timeline(
   departure: GateWorldline,
   cruiseSpeed: MetersPerSecond,
   solvedIntercept: InterceptSolution,
+  uncertainty: ScenarioUncertainty,
+  canonicalClaims: readonly ScenarioCanonicalClaim[],
 ): JourneyTimeline {
   const duration = solvedIntercept.duration;
   const destinationPosition = numericPosition(solvedIntercept.target.position);
@@ -938,11 +1207,13 @@ function timeline(
   const cruiseDepartureReading = clocks(zeroSeconds, zeroSeconds);
   const cruiseArrivalReading = clocks(cruiseDuration, properDuration);
   const arrivalReading = cruiseArrivalReading;
-  const phases = Object.freeze([
-    phase("departure-transition", departureReading, cruiseDepartureReading),
-    phase("interstellar-cruise", cruiseDepartureReading, cruiseArrivalReading),
-    phase("arrival-transition", cruiseArrivalReading, arrivalReading),
-  ]);
+  const phases = Object.freeze(
+    [
+      phase("departure-transition", departureReading, cruiseDepartureReading),
+      phase("interstellar-cruise", cruiseDepartureReading, cruiseArrivalReading),
+      phase("arrival-transition", cruiseArrivalReading, arrivalReading),
+    ].map((candidate) => boundedPhase(candidate, uncertainty)),
+  );
   const events = Object.freeze([
     event("departure", "departure-transition", departureReading),
     event("cruise-departure", "interstellar-cruise", cruiseDepartureReading),
@@ -950,6 +1221,14 @@ function timeline(
     event("arrival", "arrival-transition", arrivalReading),
   ]);
   const cruiseVelocityVector = velocity(cruiseVelocity);
+  const totalBounds = clockBounds(arrivalReading, uncertainty);
+  const discrepancies = journeyDiscrepancies(
+    canonicalClaims,
+    departureGateId,
+    destinationGateId,
+    arrivalReading,
+    totalBounds,
+  );
   const arrivalIntercept: ArrivalIntercept = Object.freeze({
     destinationGateId,
     coordinateTime: seconds(departureCoordinateTime.value + duration),
@@ -981,6 +1260,11 @@ function timeline(
     totalClusterCoordinateTime: arrivalReading.clusterCoordinateTime,
     totalShipProperTime: arrivalReading.shipProperTime,
     totalAgingDifference: arrivalReading.agingDifference,
+    totalBounds,
+    bounds: totalBounds,
+    clockBounds: totalBounds,
+    displayPrecision: uncertainty.displayPrecision,
+    discrepancies,
   });
 }
 
@@ -1444,6 +1728,7 @@ function simulateDwell(
   }
   const properDuration = seconds(properDurationValue);
   const total = clocks(duration, properDuration);
+  const totalBounds = clockBounds(total, scenario.uncertainty);
   return Object.freeze({
     kind: "dwell" as const,
     gateId,
@@ -1458,6 +1743,16 @@ function simulateDwell(
     arrivalPosition: arrivalResult.state.position,
     arrivalVelocity: arrivalResult.state.velocity,
     clocks: total,
+    durationBounds: uncertainSeconds(duration, scenario.uncertainty),
+    properDurationBounds: uncertainSeconds(properDuration, scenario.uncertainty),
+    agingDifferenceBounds: conservativeBounds(
+      total.agingDifference,
+      seconds(Math.min(total.agingDifference.value, totalBounds.lower.agingDifference.value)),
+      seconds(Math.max(total.agingDifference.value, totalBounds.upper.agingDifference.value)),
+      scenario.uncertainty.displayPrecision,
+    ),
+    bounds: totalBounds,
+    displayPrecision: scenario.uncertainty.displayPrecision,
   });
 }
 
@@ -1497,6 +1792,32 @@ function multiLegPhase(
     cruise,
     transfer,
     dwell,
+    bounds: exactPhaseBounds(start, end),
+    displayPrecision: createDisplayPrecision({}, "default"),
+  });
+}
+
+function boundedMultiLegPhase(
+  value: MultiLegJourneyPhase,
+  uncertainty: ScenarioUncertainty,
+): MultiLegJourneyPhase {
+  const bounded = boundedPhase(
+    {
+      kind: value.kind,
+      clusterCoordinateDuration: value.clusterCoordinateDuration,
+      shipProperDuration: value.shipProperDuration,
+      agingDifference: value.agingDifference,
+      start: value.start,
+      end: value.end,
+      bounds: value.bounds,
+      displayPrecision: value.displayPrecision,
+    },
+    uncertainty,
+  );
+  return Object.freeze({
+    ...value,
+    bounds: bounded.bounds,
+    displayPrecision: bounded.displayPrecision,
   });
 }
 
@@ -2012,6 +2333,17 @@ export function simulateMultiLegJourney(
     return failure(issues);
   }
 
+  const totalBounds = clockBounds(total, scenario.uncertainty);
+  const boundedPhases = Object.freeze(
+    phases.map((candidate) => boundedMultiLegPhase(candidate, scenario.uncertainty)),
+  );
+  const discrepancies = journeyDiscrepancies(
+    scenario.canonicalClaims,
+    parsed.departureGateId,
+    parsed.destinationGateId,
+    total,
+    totalBounds,
+  );
   const timeline: MultiLegJourneyTimeline = Object.freeze({
     kind: "journey",
     departureGateId: parsed.departureGateId,
@@ -2024,9 +2356,14 @@ export function simulateMultiLegJourney(
     arrivalPosition: currentPosition,
     arrivalVelocity: currentVelocity,
     legs: Object.freeze(legs),
-    phases: Object.freeze(phases),
+    phases: boundedPhases,
     events: Object.freeze(events),
     clocks: total,
+    totalBounds,
+    bounds: totalBounds,
+    clockBounds: totalBounds,
+    displayPrecision: scenario.uncertainty.displayPrecision,
+    discrepancies,
   });
   return Object.freeze({ ok: true as const, timeline, issues: [] as const });
 }
@@ -2284,6 +2621,8 @@ export function simulateJourney(
               departureWorldline.state,
               cruiseSpeed,
               solvedIntercept,
+              scenario.uncertainty,
+              scenario.canonicalClaims,
             );
             if (
               !Number.isFinite(resultTimeline.totalClusterCoordinateTime.value) ||

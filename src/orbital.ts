@@ -532,6 +532,10 @@ export function evaluateScenarioWorldlines(
         positionAtEpoch: gate.positionAtEpoch,
         velocityAtEpoch: gate.velocityAtEpoch,
         orbitalElements: gate.orbitalElements,
+        canonicalIdentity: gate.canonicalIdentity,
+        provenance: gate.provenance,
+        properties: gate.properties,
+        propertyProvenance: gate.propertyProvenance,
       };
       const relative = evaluateOrbit(pseudoAnchor, elapsedSeconds);
       resolved = relative.ok

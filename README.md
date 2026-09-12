@@ -66,3 +66,25 @@ remain explicit zero-duration phases, powered transfer detail is retained in eac
 proper time is integrated from the Gate worldline. Its cumulative clocks are exposed through
 `timeline.clocks`; `multiLegJourneyScenario` and `multiLegJourneyRequest` provide a deterministic
 end-to-end public-seam fixture.
+
+## Provenance, claims, and uncertainty
+
+The public model keeps source metadata at property level. Use `novelProvenance` or
+`supplementaryOfficialProvenance` with citations for sourced values, and use
+`provisionalProvenance` or `generatedProvenance` for assumptions and deterministic generated
+properties. A compiled entity's `canonicalIdentity` is independent from its `properties`, so a
+canonical System can retain its identity while its missing coordinates are generated.
+
+Canonical facts remain explicit through `exactClaim`, `rangeClaim`, and `qualitativeClaim`.
+`rangeClaim` retains inclusive `lower`, `upper`, and selected `nominal` values; `selectNominal`
+changes only the calculation selection and never discards the source range. Compiled properties
+expose the selected `value`/`nominal`, optional `claim`, `provenance`, `bounds`, and
+`displayPrecision`. Journey phases and totals expose conservative bounds through `bounds` (also
+available as `totalBounds`/`clockBounds`) and precision metadata derived from source precision or
+uncertainty rather than floating-point representation.
+
+Preserve disagreements instead of correcting the source: `compareCanonicalClaim` returns a
+`CanonDiscrepancy` containing the unchanged Canonical Claim and Derived Result. Scenario edits use
+immutable ordered layers created by `createScenarioOverrideLayer`; apply them with
+`applyScenarioOverrides`, inspect changes with `compareScenarioOverrides`, and remove one with
+`revertScenarioOverride`. The original compiled Scenario remains available as the override base.

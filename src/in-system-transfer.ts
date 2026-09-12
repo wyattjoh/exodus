@@ -24,7 +24,15 @@ import type {
   StableId,
   WorldlineIssue,
 } from "./model";
-import type { JourneyClockReading } from "./simulation";
+import type { JourneyClockBounds, JourneyClockReading } from "./simulation";
+import {
+  conservativeBounds,
+  createDisplayPrecision,
+  exactBounds,
+  type ConservativeBounds,
+  type DisplayPrecision,
+} from "./provenance";
+import type { ScenarioUncertainty } from "./model";
 
 const stableIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const TRANSFER_MAX_SOLVER_ITERATIONS = 180;
@@ -96,6 +104,14 @@ export type InSystemTransferPhase = {
   readonly endPosition: PositionVector;
   readonly startVelocity: VelocityVector;
   readonly endVelocity: VelocityVector;
+  readonly bounds: {
+    readonly clusterCoordinateDuration: ConservativeBounds<Seconds>;
+    readonly shipProperDuration: ConservativeBounds<Seconds>;
+    readonly agingDifference: ConservativeBounds<Seconds>;
+    readonly start: JourneyClockBounds;
+    readonly end: JourneyClockBounds;
+  };
+  readonly displayPrecision: DisplayPrecision;
 };
 
 /**
@@ -141,6 +157,10 @@ export type InSystemTransferTimeline = {
   readonly totalClusterCoordinateTime: Seconds;
   readonly totalShipProperTime: Seconds;
   readonly totalAgingDifference: Seconds;
+  readonly totalBounds: JourneyClockBounds;
+  readonly bounds: JourneyClockBounds;
+  readonly clockBounds: JourneyClockBounds;
+  readonly displayPrecision: DisplayPrecision;
 };
 
 /**
@@ -548,6 +568,128 @@ function clocks(clusterCoordinateTime: number, shipProperTime: number): JourneyC
     clusterCoordinateTime: seconds(clusterCoordinateTime),
     shipProperTime: seconds(shipProperTime),
     agingDifference: seconds(clusterCoordinateTime - shipProperTime),
+  });
+}
+
+function exactClockBounds(reading: JourneyClockReading): JourneyClockBounds {
+  const cluster = conservativeBounds(
+    reading.clusterCoordinateTime,
+    reading.clusterCoordinateTime,
+    reading.clusterCoordinateTime,
+  );
+  const ship = conservativeBounds(
+    reading.shipProperTime,
+    reading.shipProperTime,
+    reading.shipProperTime,
+  );
+  const aging = conservativeBounds(
+    reading.agingDifference,
+    reading.agingDifference,
+    reading.agingDifference,
+  );
+  const lower = Object.freeze({
+    clusterCoordinateTime: cluster.lower,
+    shipProperTime: ship.lower,
+    agingDifference: aging.lower,
+  });
+  const upper = Object.freeze({
+    clusterCoordinateTime: cluster.upper,
+    shipProperTime: ship.upper,
+    agingDifference: aging.upper,
+  });
+  return Object.freeze({
+    nominal: reading,
+    lower,
+    upper,
+    lowerBound: lower,
+    upperBound: upper,
+    conservative: Object.freeze({ lower, upper }),
+  });
+}
+
+function uncertaintyPadding(value: number, uncertainty: ScenarioUncertainty): number {
+  return uncertainty.hasUncertainty &&
+    (uncertainty.relativeFactor !== 0 || uncertainty.absoluteSeconds !== 0)
+    ? Math.abs(value) * uncertainty.relativeFactor + uncertainty.absoluteSeconds
+    : 0;
+}
+
+function uncertainSeconds(
+  value: Seconds,
+  uncertainty: ScenarioUncertainty,
+): ConservativeBounds<Seconds> {
+  if (value.value === 0) {
+    return exactBounds(value);
+  }
+  const padding = uncertaintyPadding(value.value, uncertainty);
+  return conservativeBounds(
+    value,
+    seconds(Math.max(0, value.value - padding)),
+    seconds(Math.max(0, value.value + padding)),
+    uncertainty.displayPrecision,
+  );
+}
+
+function clockBounds(
+  reading: JourneyClockReading,
+  uncertainty: ScenarioUncertainty,
+): JourneyClockBounds {
+  const cluster = uncertainSeconds(reading.clusterCoordinateTime, uncertainty);
+  const ship = uncertainSeconds(reading.shipProperTime, uncertainty);
+  const agingLower = cluster.lower.value - ship.upper.value;
+  const agingUpper = cluster.upper.value - ship.lower.value;
+  const aging = conservativeBounds(
+    reading.agingDifference,
+    seconds(Math.min(reading.agingDifference.value, agingLower)),
+    seconds(Math.max(reading.agingDifference.value, agingUpper)),
+    uncertainty.displayPrecision,
+  );
+  const lower = Object.freeze({
+    clusterCoordinateTime: cluster.lower,
+    shipProperTime: ship.lower,
+    agingDifference: aging.lower,
+  });
+  const upper = Object.freeze({
+    clusterCoordinateTime: cluster.upper,
+    shipProperTime: ship.upper,
+    agingDifference: aging.upper,
+  });
+  return Object.freeze({
+    nominal: reading,
+    lower,
+    upper,
+    lowerBound: lower,
+    upperBound: upper,
+    conservative: Object.freeze({ lower, upper }),
+  });
+}
+
+function phaseBounds(
+  start: JourneyClockReading,
+  end: JourneyClockReading,
+  uncertainty: ScenarioUncertainty,
+): InSystemTransferPhase["bounds"] {
+  const clusterDuration = seconds(
+    end.clusterCoordinateTime.value - start.clusterCoordinateTime.value,
+  );
+  const properDuration = seconds(end.shipProperTime.value - start.shipProperTime.value);
+  const agingDifference = seconds(end.agingDifference.value - start.agingDifference.value);
+  const cluster = uncertainSeconds(clusterDuration, uncertainty);
+  const proper = uncertainSeconds(properDuration, uncertainty);
+  const agingLower = cluster.lower.value - proper.upper.value;
+  const agingUpper = cluster.upper.value - proper.lower.value;
+  const aging = conservativeBounds(
+    agingDifference,
+    seconds(Math.min(agingDifference.value, agingLower)),
+    seconds(Math.max(agingDifference.value, agingUpper)),
+    uncertainty.displayPrecision,
+  );
+  return Object.freeze({
+    clusterCoordinateDuration: cluster,
+    shipProperDuration: proper,
+    agingDifference: aging,
+    start: clockBounds(start, uncertainty),
+    end: clockBounds(end, uncertainty),
   });
 }
 
@@ -1743,6 +1885,7 @@ function makePhase(
   endPosition: NumericVector3,
   startVelocity: NumericVector3,
   endVelocity: NumericVector3,
+  uncertainty: ScenarioUncertainty,
 ): InSystemTransferPhase {
   return Object.freeze({
     kind: profilePhase.kind,
@@ -1755,6 +1898,8 @@ function makePhase(
     endPosition: positionVector(endPosition),
     startVelocity: velocityVector(startVelocity),
     endVelocity: velocityVector(endVelocity),
+    bounds: phaseBounds(start, end, uncertainty),
+    displayPrecision: uncertainty.displayPrecision,
   });
 }
 
@@ -1784,6 +1929,7 @@ function makeGeneralTimeline(
   departureCoordinateTime: Seconds,
   departure: GateWorldline,
   trajectory: GeneralTransferTrajectory,
+  uncertainty: ScenarioUncertainty,
 ): InSystemTransferTimeline {
   const phases: InSystemTransferPhase[] = [];
   const events: InSystemTransferEvent[] = [];
@@ -1811,6 +1957,7 @@ function makeGeneralTimeline(
         trajectoryPhase.endEvent.position,
         trajectoryPhase.startVelocity,
         trajectoryPhase.endVelocity,
+        uncertainty,
       ),
     );
     if (index === 0) {
@@ -1858,6 +2005,7 @@ function makeGeneralTimeline(
   }
 
   const total = clocks(trajectory.duration, cumulativeProperTime);
+  const totalBounds = clockBounds(total, uncertainty);
   const finalPhase = trajectory.phases[trajectory.phases.length - 1];
   const arrivalPosition = finalPhase?.endEvent.position ?? numericPosition(departure.position);
   const arrivalVelocity = finalPhase?.endVelocity ?? numericVelocity(departure.velocity);
@@ -1900,6 +2048,10 @@ function makeGeneralTimeline(
     totalClusterCoordinateTime: total.clusterCoordinateTime,
     totalShipProperTime: total.shipProperTime,
     totalAgingDifference: total.agingDifference,
+    totalBounds,
+    bounds: totalBounds,
+    clockBounds: totalBounds,
+    displayPrecision: uncertainty.displayPrecision,
   });
 }
 
@@ -1982,6 +2134,7 @@ function makeTimeline(
         endPosition,
         startVelocity,
         endVelocity,
+        scenario.uncertainty,
       ),
     );
     if (phaseIndex === 0) {
@@ -2003,6 +2156,7 @@ function makeTimeline(
   }
 
   const total = clocks(cumulativeCoordinateTime, cumulativeProperTime);
+  const totalBounds = clockBounds(total, scenario.uncertainty);
   const arrivalLateral = lateralState(profile, "braking", profile.braking.coordinateDuration);
   const arrivalPosition = phasePosition(
     departurePosition,
@@ -2071,6 +2225,10 @@ function makeTimeline(
     totalClusterCoordinateTime: total.clusterCoordinateTime,
     totalShipProperTime: total.shipProperTime,
     totalAgingDifference: total.agingDifference,
+    totalBounds,
+    bounds: totalBounds,
+    clockBounds: totalBounds,
+    displayPrecision: scenario.uncertainty.displayPrecision,
   });
 }
 
@@ -2286,6 +2444,7 @@ export function simulateInSystemTransfer(
           departureCoordinateTime,
           departureWorldline.state,
           solved.general,
+          scenario.uncertainty,
         );
   if (
     !Number.isFinite(timeline.totalClusterCoordinateTime.value) ||

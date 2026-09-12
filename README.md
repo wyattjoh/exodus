@@ -6,8 +6,9 @@ Keplerian Gate worldlines, simulating powered In-system Transfers between moving
 planning earliest-arrival Journeys through a finite explicit Gate network. The CPU reference
 also generates deterministic, provenance-marked Cluster regions. A framework-independent,
 versioned worker-planning adapter runs generation, route planning, and bounded refinement through
-injectable Worker-like ports with correlated progress and cancellation; the browser application is
-implemented by a later ticket.
+injectable Worker-like ports with correlated progress and cancellation. The first browser
+calculator is a local-first React PWA that keeps Scenario JSON in IndexedDB and runs planning in a
+native module Worker.
 
 ## Commands
 
@@ -43,6 +44,21 @@ The CI-equivalent local gate is:
 ```sh
 bun run check
 ```
+
+Run the local React calculator with Vite:
+
+```sh
+bun run dev
+bun run build
+bun run preview
+```
+
+The production build includes a versioned manifest and service worker. After the first successful
+load, the calculator shell and worker assets are served from the browser cache and route planning
+remains local-only. `bun run browser:dev`, `bun run browser:build`, and `bun run browser:preview`
+are equivalent aliases. With a Chrome DevTools Protocol endpoint available, run
+`CHROME_CDP_URL=http://127.0.0.1:9222 bun run pwa:offline-smoke` for the true offline reload and
+Worker-planning smoke test.
 
 The public interface is exported from `src/index.ts`. `compileScenario` accepts an unknown
 value so malformed imported data produces structured `ValidationIssue` values rather than an

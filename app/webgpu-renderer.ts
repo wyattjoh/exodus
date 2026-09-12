@@ -289,6 +289,8 @@ export type WebGpuRendererResult =
 const BUFFER_USAGE_COPY_DST = 0x08;
 const BUFFER_USAGE_VERTEX = 0x20;
 const BUFFER_USAGE_UNIFORM = 0x40;
+// Keep small dynamically growing vertex buffers aligned for browser WebGPU implementations.
+const MIN_VERTEX_BUFFER_BYTES = 256;
 const SHADER = /* wgsl */ `
 struct Camera {
   viewProjection: mat4x4<f32>,
@@ -325,7 +327,9 @@ function defaultScheduler(): WebGpuRenderScheduler {
     readonly requestAnimationFrame: ((callback: () => void) => number) | undefined;
   };
   if (runtime.requestAnimationFrame !== undefined) {
-    return Object.freeze({ request: runtime.requestAnimationFrame });
+    return Object.freeze({
+      request: (callback: () => void) => runtime.requestAnimationFrame(callback),
+    });
   }
   return Object.freeze({ request: (callback: () => void) => setTimeout(callback, 0) });
 }
@@ -715,7 +719,7 @@ function createRenderer(
       return { buffer: undefined, capacity: 0 };
     }
     const byteLength = values.byteLength;
-    const nextCapacity = Math.max(byteLength, capacity * 2, 4);
+    const nextCapacity = Math.max(byteLength, capacity * 2, 256);
     const buffer =
       previous !== undefined && capacity >= byteLength
         ? previous
@@ -841,6 +845,7 @@ function createRenderer(
             yaw: Math.PI / 4,
             pitch: 0.36,
             distance: 3.2,
+            far: undefined,
           },
         });
         queueRender();

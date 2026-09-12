@@ -1,0 +1,510 @@
+.system-view-card {
+  display: grid;
+  gap: 14px;
+  padding: clamp(18px, 3vw, 30px);
+  border: 1px solid rgba(154, 198, 239, 0.25);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(21, 31, 42, 0.98), rgba(9, 15, 20, 0.99));
+  box-shadow: var(--shadow);
+}
+
+.system-view-heading {
+  align-items: flex-start;
+  margin-bottom: 0;
+}
+
+.system-view-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.system-view-intro {
+  max-width: 78ch;
+  margin: 0;
+}
+
+.system-view-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 330px);
+  gap: 14px;
+}
+
+.system-view-viewport-wrap,
+.system-view-inspector {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(4, 11, 17, 0.68);
+}
+
+.system-view-viewport-wrap {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 12px;
+}
+
+.system-view-toolbar,
+.system-scrubber-heading,
+.system-scrubber-bounds {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.system-view-toolbar > div {
+  display: grid;
+  gap: 3px;
+}
+
+.system-scale-label {
+  color: var(--blue);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.68rem;
+}
+
+.system-view-toolbar small,
+.system-scrubber-bounds {
+  color: var(--faint);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.58rem;
+}
+
+.system-canvas-frame {
+  position: relative;
+  min-height: 300px;
+  overflow: hidden;
+  border: 1px solid rgba(154, 198, 239, 0.25);
+  border-radius: 10px;
+  background: radial-gradient(circle at 50% 45%, rgba(55, 94, 130, 0.24), transparent 58%), #071014;
+}
+
+.system-canvas {
+  display: block;
+  width: 100%;
+  height: min(49vh, 500px);
+  min-height: 300px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.system-canvas:active {
+  cursor: grabbing;
+}
+
+.system-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--muted);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.6rem;
+  text-transform: capitalize;
+}
+
+.system-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.system-legend-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.system-swatch-anchor {
+  color: var(--mint);
+  background: currentColor;
+}
+
+.system-swatch-gate {
+  color: var(--amber);
+  background: currentColor;
+}
+
+.system-swatch-acceleration {
+  color: #62d8fa;
+  background: currentColor;
+}
+
+.system-swatch-coast {
+  color: var(--amber);
+  background: currentColor;
+}
+
+.system-swatch-braking {
+  color: var(--red);
+  background: currentColor;
+}
+
+.system-swatch-intercept {
+  color: var(--ink);
+  background: currentColor;
+}
+
+.system-scrubber {
+  display: grid;
+  gap: 7px;
+  padding: 11px 0 1px;
+  border-top: 1px solid var(--line);
+}
+
+.system-scrubber-heading {
+  color: var(--ink);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.system-scrubber-heading output {
+  color: var(--blue);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.65rem;
+}
+
+.system-event-select {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid rgba(154, 198, 239, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.6rem;
+}
+
+.system-camera-help,
+.system-discrete-help {
+  margin: 0;
+  font-size: 0.62rem;
+  line-height: 1.45;
+}
+
+.system-event-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.system-event-buttons .button {
+  min-height: 30px;
+  padding: 5px 7px;
+  color: var(--muted);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.56rem;
+}
+
+.system-view-inspector {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 13px;
+}
+
+.system-active-phase,
+.system-body-list,
+.system-transfer-panel,
+.system-phase-list {
+  display: grid;
+  gap: 8px;
+}
+
+.system-active-phase {
+  padding-bottom: 13px;
+  border-bottom: 1px solid var(--line);
+}
+
+.system-active-phase .eyebrow {
+  margin-bottom: 0;
+  font-size: 0.6rem;
+}
+
+.system-active-phase h3 {
+  margin: 0;
+  color: var(--blue);
+  font-size: 1rem;
+}
+
+.system-active-phase p:not(.eyebrow):not(.system-active-event) {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.67rem;
+  line-height: 1.45;
+}
+
+.system-clock-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 2px 0 0;
+}
+
+.system-clock-grid div {
+  padding: 7px;
+  border: 1px solid rgba(154, 198, 239, 0.14);
+  border-radius: 7px;
+  background: rgba(154, 198, 239, 0.04);
+}
+
+.system-clock-grid dt {
+  color: var(--faint);
+  font-size: 0.56rem;
+}
+
+.system-clock-grid dd {
+  margin: 4px 0 0;
+  color: var(--blue);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.62rem;
+}
+
+.system-active-event,
+.system-intercept-note {
+  margin: 0;
+  color: var(--amber);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.61rem;
+}
+
+.system-bodies {
+  display: grid;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.system-body {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.system-body.is-selected {
+  border-color: rgba(242, 200, 121, 0.5);
+  background: rgba(242, 200, 121, 0.06);
+}
+
+.system-body-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.system-body-heading strong {
+  color: var(--ink);
+  font-size: 0.69rem;
+}
+
+.system-body .provenance-tag {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  font-size: 0.5rem;
+}
+
+.system-body code,
+.system-body > small {
+  color: var(--faint);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.55rem;
+}
+
+.system-body dl {
+  display: grid;
+  gap: 3px;
+  margin: 3px 0 0;
+}
+
+.system-body dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 5px;
+}
+
+.system-body dt,
+.system-body dd {
+  margin: 0;
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.54rem;
+}
+
+.system-body dt {
+  color: var(--faint);
+}
+
+.system-body dd {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-transfer-panel {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.system-transfer-panel .status-pill {
+  padding: 2px 5px;
+  font-size: 0.5rem;
+}
+
+.system-transfer-segments {
+  display: grid;
+  gap: 5px;
+}
+
+.system-transfer-segment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 7px;
+  border-left: 3px solid currentColor;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--muted);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.58rem;
+}
+
+.system-transfer-segment span {
+  color: var(--faint);
+}
+
+.system-transfer-events {
+  display: grid;
+  gap: 4px;
+}
+
+.system-transfer-events-heading {
+  color: var(--faint);
+  font-size: 0.58rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.system-transfer-events .button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 29px;
+  padding: 5px 7px;
+  color: var(--muted);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.56rem;
+  text-align: left;
+}
+
+.system-transfer-events .button[aria-pressed="true"] {
+  border-color: rgba(242, 200, 121, 0.45);
+  background: rgba(242, 200, 121, 0.08);
+  color: var(--amber);
+}
+
+.system-transfer-events small {
+  color: var(--faint);
+  font-size: 0.52rem;
+}
+
+.system-phase-acceleration {
+  color: #62d8fa;
+}
+
+.system-phase-coast {
+  color: var(--amber);
+}
+
+.system-phase-braking {
+  color: var(--red);
+}
+
+.system-phase-list {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.system-phase-buttons {
+  display: grid;
+  gap: 4px;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.system-phase-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--muted);
+  font-size: 0.6rem;
+  text-align: left;
+}
+
+.system-phase-button:hover,
+.system-phase-button.is-active {
+  border-color: rgba(154, 198, 239, 0.4);
+  background: rgba(154, 198, 239, 0.08);
+  color: var(--blue);
+}
+
+.system-phase-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.system-phase-button small {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.54rem;
+}
+
+.system-no-journey {
+  margin: 0;
+  font-size: 0.68rem;
+}
+
+@media (max-width: 1080px) {
+  .system-view-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .system-view-inspector {
+    grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+    align-items: start;
+  }
+
+  .system-active-phase,
+  .system-transfer-panel,
+  .system-phase-list {
+    padding-top: 0;
+    border-top: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .system-view-actions {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+
+  .system-view-inspector {
+    grid-template-columns: 1fr;
+  }
+}

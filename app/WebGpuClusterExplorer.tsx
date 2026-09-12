@@ -10,7 +10,9 @@ import {
 import "./cluster-explorer.css";
 import type {
   CompiledScenario,
+  JourneyModel,
   ProvenanceKind,
+  RoutePlan,
   StableId,
   WorkerPlanningProgress,
 } from "../src/index";
@@ -37,6 +39,7 @@ import {
   type ExplorerPoint,
   type ExplorerSelection,
 } from "./cluster-explorer";
+import { SystemExplorerView } from "./SystemExplorerView";
 import {
   createWebGpuRenderer,
   type WebGpuApi,
@@ -66,6 +69,8 @@ export type WebGpuClusterExplorerProps = {
   readonly selectedProvenance: readonly ProvenanceKind[];
   readonly onProvenanceChange: (kind: ProvenanceKind, enabled: boolean) => void;
   readonly generation: ClusterGenerationView;
+  readonly model: Pick<JourneyModel, "evaluateWorldlines"> | undefined;
+  readonly plannedJourney: RoutePlan | undefined;
 };
 
 function color(
@@ -207,6 +212,8 @@ export function WebGpuClusterExplorer({
   selectedProvenance,
   onProvenanceChange,
   generation,
+  model,
+  plannedJourney,
 }: WebGpuClusterExplorerProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<WebGpuRenderer | undefined>(undefined);
@@ -228,6 +235,12 @@ export function WebGpuClusterExplorer({
   const inspected = selectedPoint(scene, selection);
   const inspectedConnections =
     inspected === undefined ? [] : connectionsForExplorerEntity(scene, inspected.id);
+  const inspectedSystemId = inspected?.systemId;
+  const selectedGateIds = [
+    selection.departureGateId,
+    selection.destinationGateId,
+    inspected?.entityKind === "gate" ? inspected.id : undefined,
+  ].filter((gateId): gateId is StableId => gateId !== undefined);
   const generatedSystemCount = scenario.systems.filter(
     (system) => system.provenance.kind === "generated",
   ).length;
@@ -634,6 +647,24 @@ export function WebGpuClusterExplorer({
           </aside>
         </div>
       )}
+      {model !== undefined && inspectedSystemId !== undefined ? (
+        <SystemExplorerView
+          model={model}
+          scenario={scenario}
+          systemId={inspectedSystemId}
+          journey={plannedJourney}
+          selectedGateIds={selectedGateIds}
+          onClose={() =>
+            onSelectionChange(
+              Object.freeze({
+                ...selection,
+                focusedEntityId: undefined,
+                selectedEntityId: undefined,
+              }),
+            )
+          }
+        />
+      ) : null}
       {generation.state === "failed" && generation.error !== undefined ? (
         <output className="notice notice-warning" aria-live="polite">
           {generation.error}

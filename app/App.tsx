@@ -1171,6 +1171,8 @@ export default function App(): JSX.Element {
               progress: generationProgress,
               error: generationError,
             }}
+            model={model}
+            plannedJourney={result?.ok === true ? result.plan : undefined}
           />
           {workerFailure ? (
             <section

@@ -97,6 +97,8 @@ export type CameraState = {
   readonly yaw: number;
   readonly pitch: number;
   readonly distance: number;
+  /** Far clipping distance for linked views with a wider local extent, when supplied. */
+  readonly far: number | undefined;
 };
 
 /**
@@ -539,6 +541,7 @@ export function createCameraState(target: ExplorerVector3 | undefined): CameraSt
     yaw: DEFAULT_CAMERA_YAW,
     pitch: DEFAULT_CAMERA_PITCH,
     distance: DEFAULT_CAMERA_DISTANCE,
+    far: undefined,
   });
 }
 
@@ -699,7 +702,10 @@ export function createExplorerViewProjectionMatrix(
   ]);
   const fieldOfView = Math.PI / 3;
   const near = 0.01;
-  const far = 100;
+  const far =
+    camera.far === undefined || !Number.isFinite(camera.far) || camera.far <= near
+      ? 100
+      : camera.far;
   const f = 1 / Math.tan(fieldOfView / 2);
   const projection = new Float32Array([
     f / aspect,

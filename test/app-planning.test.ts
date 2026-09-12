@@ -4,11 +4,13 @@ import {
   createInProcessWorkerFactory,
   createJourneyModel,
   createWorkerPlanningAdapter,
+  generateClusterRegion,
 } from "../src/index";
 import {
   applyNominalUncertainty,
   buildRoutePlanningRequest,
   createPlanningRevisionController,
+  formatGateLabel,
   getScenarioUncertaintyControls,
   provenanceKinds,
 } from "../app/planning";
@@ -23,6 +25,22 @@ function requireScenario() {
 }
 
 describe("calculator planning seam", () => {
+  test("labels generated Gate options from the active materialized Scenario", () => {
+    const generated = generateClusterRegion({
+      logicalPopulation: 32,
+      materializedSystemCount: 8,
+      seed: "gate-label-test",
+      generatorVersion: "globular-v1",
+    });
+    const gate = generated.scenario.gates[0];
+    if (gate === undefined) {
+      throw new Error("Expected the generated Scenario to contain a Gate.");
+    }
+
+    expect(formatGateLabel(generated.scenario, gate.id)).toBe(`${gate.name} · ${gate.designation}`);
+    expect(formatGateLabel(generated.scenario, gate.id)).not.toBe(gate.id);
+  });
+
   test("maps UI selections into a bounded domain request without calculating route physics", () => {
     const request = buildRoutePlanningRequest({
       departureGateId: "gate:terra",

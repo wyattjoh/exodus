@@ -23,6 +23,14 @@ export const provenanceKinds: readonly ProvenanceKind[] = Object.freeze([
 ]);
 
 /**
+ * Formats a Gate option from the Scenario that currently owns the active Gate.
+ */
+export function formatGateLabel(scenario: CompiledScenario, gateId: StableId): string {
+  const gate = scenario.index.gates.get(gateId);
+  return gate === undefined ? gateId : `${gate.name} · ${gate.designation}`;
+}
+
+/**
  * Form values needed to construct a finite route-planning request.
  */
 export type RoutePlanningForm = {

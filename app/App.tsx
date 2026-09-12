@@ -14,16 +14,25 @@ import {
   type RoutePlan,
   type RoutePlanningResult,
   type StableId,
+  type WorkerGeneratedClusterRegion,
   type WorkerPlanningProgress,
   type WorkerPlanningTask,
 } from "../src/index";
 import { createBrowserScenarioRepository } from "./browser-storage";
 import { createBrowserWorkerPlanningAdapter } from "./browser-worker";
+import { WebGpuClusterExplorer, type ClusterGenerationView } from "./WebGpuClusterExplorer";
+import {
+  createExplorerSelection,
+  normalizeExplorerSelection,
+  selectExplorerGate,
+  type ExplorerSelection,
+} from "./cluster-explorer";
 import { bundledCatalogScenarioInput, createLocalScenarioInput } from "./catalog";
 import {
   applyNominalUncertainty,
   buildRoutePlanningRequest,
   createPlanningRevisionController,
+  formatGateLabel,
   getScenarioUncertaintyControls,
   provenanceKinds,
   type ScenarioUncertaintyControl,
@@ -61,11 +70,6 @@ function compileBundledCatalog(): CompiledScenario {
     throw new Error(result.issues.map((issue) => issue.message).join("\n"));
   }
   return result.scenario;
-}
-
-function gateLabel(scenario: CompiledScenario, gateId: StableId): string {
-  const gate = scenario.index.gates.get(gateId);
-  return gate === undefined ? gateId : `${gate.name} · ${gate.designation}`;
 }
 
 function shipLabel(scenario: CompiledScenario, shipId: StableId): string {
@@ -292,7 +296,7 @@ function ProvenanceFilter({
     <fieldset className="control-group">
       <legend>Provenance filter</legend>
       <p className="control-help">
-        Filter route data without adding a hidden cost to generated links.
+        Filter the Cluster explorer and route data without adding a hidden cost to generated links.
       </p>
       <div className="check-grid">
         {provenanceKinds.map((kind) => (
@@ -580,10 +584,19 @@ export default function App(): JSX.Element {
   const repository = useMemo(() => createBrowserScenarioRepository(model), [model]);
   const adapter = useMemo(() => createBrowserWorkerPlanningAdapter(), []);
   const [scenario, setScenario] = useState<CompiledScenario>(() => compileBundledCatalog());
+  const [generatedScenario, setGeneratedScenario] = useState<CompiledScenario | undefined>(
+    undefined,
+  );
   const [records, setRecords] = useState<readonly ScenarioStorageRecord[]>([]);
-  const [selectedDeparture, setSelectedDeparture] = useState<StableId>("gate:terra");
-  const [selectedDestination, setSelectedDestination] = useState<StableId>("gate:helios");
+  const [selection, setSelection] = useState<ExplorerSelection>(() =>
+    createExplorerSelection("gate:terra", "gate:helios"),
+  );
   const [selectedShip, setSelectedShip] = useState<StableId>("ship:survey");
+  const [generationState, setGenerationState] = useState<ClusterGenerationView["state"]>("idle");
+  const [generationProgress, setGenerationProgress] = useState<WorkerPlanningProgress | undefined>(
+    undefined,
+  );
+  const [generationError, setGenerationError] = useState<string | undefined>(undefined);
   const [departureDays, setDepartureDays] = useState(0);
   const [latestArrivalDays, setLatestArrivalDays] = useState(DEFAULT_LATEST_ARRIVAL_DAYS);
   const [strategicWaitDays, setStrategicWaitDays] = useState(DEFAULT_STRATEGIC_WAIT_DAYS);
@@ -598,7 +611,13 @@ export default function App(): JSX.Element {
   const [storageError, setStorageError] = useState("");
   const [offlineStatus, setOfflineStatus] = useState<OfflineStatus>("preparing");
   const activeTask = useRef<WorkerPlanningTask<RoutePlanningResult> | undefined>(undefined);
+  const generationTask = useRef<WorkerPlanningTask<WorkerGeneratedClusterRegion> | undefined>(
+    undefined,
+  );
   const planningRevision = useMemo(() => createPlanningRevisionController(), []);
+  const activeScenario = generatedScenario ?? scenario;
+  const selectedDeparture = selection.departureGateId ?? "";
+  const selectedDestination = selection.destinationGateId ?? "";
   const uncertaintyControls = useMemo(() => getScenarioUncertaintyControls(scenario), [scenario]);
 
   useEffect(() => {
@@ -645,20 +664,110 @@ export default function App(): JSX.Element {
   }, [uncertaintyControls]);
 
   useEffect(() => {
-    if (!scenario.index.gates.has(selectedDeparture)) {
-      setSelectedDeparture(scenario.gates[0]?.id ?? "");
+    let current = true;
+    planningRevision.invalidate();
+    activeTask.current?.cancel();
+    activeTask.current = undefined;
+    generationTask.current?.cancel();
+    setGeneratedScenario(undefined);
+    setGenerationState("running");
+    setGenerationProgress(undefined);
+    setGenerationError(undefined);
+    let task: WorkerPlanningTask<WorkerGeneratedClusterRegion> | undefined;
+    try {
+      task = adapter.generate(
+        {
+          logicalPopulation: 10_000_000,
+          materializedSystemCount: 64,
+          seed: "calculator-cluster-v1",
+          generatorVersion: "globular-v1",
+        },
+        {
+          onProgress: (value) => {
+            if (current) {
+              setGenerationProgress(value);
+            }
+          },
+        },
+      );
+      generationTask.current = task;
+      void task.promise
+        .then((response) => {
+          if (!current) {
+            return;
+          }
+          if (!response.ok) {
+            setGenerationState(response.outcome === "cancelled" ? "idle" : "failed");
+            setGenerationError(response.error.message);
+            return;
+          }
+          const imported = model.importScenario(response.result.scenario);
+          if (!imported.ok) {
+            setGenerationState("failed");
+            setGenerationError(
+              imported.issues.map((issue) => `${issue.path}: ${issue.message}`).join(" "),
+            );
+            return;
+          }
+          const combined = model.compileScenario({
+            ...scenario,
+            systems: [...scenario.systems, ...imported.scenario.systems],
+            orbitalAnchors: [...scenario.orbitalAnchors, ...imported.scenario.orbitalAnchors],
+            gates: [...scenario.gates, ...imported.scenario.gates],
+            gateConnections: [...scenario.gateConnections, ...imported.scenario.gateConnections],
+            shipProfiles: [...scenario.shipProfiles, ...imported.scenario.shipProfiles],
+            generatorVersion: imported.scenario.generatorVersion,
+            seed: imported.scenario.seed,
+            logicalPopulation: imported.scenario.logicalPopulation,
+            generation: imported.scenario.generation,
+          });
+          if (!combined.ok) {
+            setGenerationState("failed");
+            setGenerationError(
+              combined.issues.map((issue) => `${issue.path}: ${issue.message}`).join(" "),
+            );
+            return;
+          }
+          planningRevision.invalidate();
+          activeTask.current?.cancel();
+          activeTask.current = undefined;
+          setPlanningState("idle");
+          setProgress(undefined);
+          setResult(undefined);
+          setWorkerFailure(undefined);
+          setGeneratedScenario(combined.scenario);
+          setGenerationState("complete");
+        })
+        .catch((error: unknown) => {
+          if (current) {
+            setGenerationState("failed");
+            setGenerationError(error instanceof Error ? error.message : "Generated region failed.");
+          }
+        });
+    } catch (error) {
+      setGenerationState("failed");
+      setGenerationError(error instanceof Error ? error.message : "Generated region failed.");
     }
-    if (!scenario.index.gates.has(selectedDestination)) {
-      setSelectedDestination(scenario.gates.at(-1)?.id ?? "");
+    return () => {
+      current = false;
+      task?.cancel();
+      if (generationTask.current === task) {
+        generationTask.current = undefined;
+      }
+    };
+  }, [adapter, model, planningRevision, scenario]);
+
+  useEffect(() => {
+    setSelection((previous) => normalizeExplorerSelection(previous, activeScenario.gates));
+    if (!activeScenario.index.shipProfiles.has(selectedShip)) {
+      setSelectedShip(activeScenario.shipProfiles[0]?.id ?? "");
     }
-    if (!scenario.index.shipProfiles.has(selectedShip)) {
-      setSelectedShip(scenario.shipProfiles[0]?.id ?? "");
-    }
-  }, [scenario, selectedDeparture, selectedDestination, selectedShip]);
+  }, [activeScenario, selectedShip]);
 
   useEffect(() => {
     return () => {
       activeTask.current?.cancel();
+      generationTask.current?.cancel();
       void adapter.dispose();
     };
   }, [adapter]);
@@ -740,7 +849,7 @@ export default function App(): JSX.Element {
     setMessage("");
     const requestRevision = planningRevision.current();
     const departureCoordinateTime =
-      scenario.epoch.coordinateTime.value + departureDays * DAY_SECONDS;
+      activeScenario.epoch.coordinateTime.value + departureDays * DAY_SECONDS;
     const request = buildRoutePlanningRequest({
       departureGateId: selectedDeparture,
       destinationGateId: selectedDestination,
@@ -753,7 +862,7 @@ export default function App(): JSX.Element {
     });
     let task: WorkerPlanningTask<RoutePlanningResult> | undefined;
     try {
-      task = adapter.plan(model.createScenarioExport(scenario), request, {
+      task = adapter.plan(model.createScenarioExport(activeScenario), request, {
         onProgress: (value) => {
           if (planningRevision.isCurrent(requestRevision)) {
             setProgress(value);
@@ -828,8 +937,8 @@ export default function App(): JSX.Element {
 
   const progressPercent =
     progress === undefined ? 0 : (progress.completedWork / progress.totalWork) * 100;
-  const departureOptions = scenario.gates;
-  const destinationOptions = scenario.gates;
+  const departureOptions = activeScenario.gates;
+  const destinationOptions = activeScenario.gates;
 
   return (
     <div className="app-shell">
@@ -892,11 +1001,15 @@ export default function App(): JSX.Element {
                 <span>Departure Gate</span>
                 <select
                   value={selectedDeparture}
-                  onChange={(event) => setSelectedDeparture(event.currentTarget.value)}
+                  onChange={(event) =>
+                    setSelection((previous) =>
+                      selectExplorerGate(previous, "departure", event.currentTarget.value),
+                    )
+                  }
                 >
                   {departureOptions.map((gate) => (
                     <option key={gate.id} value={gate.id}>
-                      {gateLabel(scenario, gate.id)}
+                      {formatGateLabel(activeScenario, gate.id)}
                     </option>
                   ))}
                 </select>
@@ -905,11 +1018,15 @@ export default function App(): JSX.Element {
                 <span>Destination Gate</span>
                 <select
                   value={selectedDestination}
-                  onChange={(event) => setSelectedDestination(event.currentTarget.value)}
+                  onChange={(event) =>
+                    setSelection((previous) =>
+                      selectExplorerGate(previous, "destination", event.currentTarget.value),
+                    )
+                  }
                 >
                   {destinationOptions.map((gate) => (
                     <option key={gate.id} value={gate.id}>
-                      {gateLabel(scenario, gate.id)}
+                      {formatGateLabel(activeScenario, gate.id)}
                     </option>
                   ))}
                 </select>
@@ -936,7 +1053,7 @@ export default function App(): JSX.Element {
                 Cluster Frame.
               </p>
               <label>
-                <span>Departure epoch ({scenario.epoch.label} days)</span>
+                <span>Departure epoch ({activeScenario.epoch.label} days)</span>
                 <input
                   type="number"
                   min="0"
@@ -1043,6 +1160,18 @@ export default function App(): JSX.Element {
         </aside>
 
         <main className="results" aria-live="polite">
+          <WebGpuClusterExplorer
+            scenario={activeScenario}
+            selection={selection}
+            onSelectionChange={setSelection}
+            selectedProvenance={selectedProvenance}
+            onProvenanceChange={toggleProvenance}
+            generation={{
+              state: generationState,
+              progress: generationProgress,
+              error: generationError,
+            }}
+          />
           {workerFailure ? (
             <section
               className="result-card failure-card"

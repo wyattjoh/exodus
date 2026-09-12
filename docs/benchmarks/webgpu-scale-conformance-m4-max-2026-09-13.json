@@ -1,0 +1,135 @@
+{
+  "reportVersion": "webgpu-conformance-v1",
+  "releaseChannel": "stable",
+  "measuredAt": "2026-09-13T02:43:22.581Z",
+  "machine": {
+    "model": "Mac16,6",
+    "chip": "Apple M4 Max",
+    "memory": "36 GiB",
+    "operatingSystem": "macOS 26.6.1 (25G76)",
+    "hostGraphicsApi": {
+      "name": "Metal",
+      "version": "Metal 4"
+    }
+  },
+  "procedure": "Production Vite build on trusted localhost; create WebGPU device; validate required limits and formats; dispatch bounded compute; draw indirect; read back count and numeric/exact-text fixtures; complete 30 warm-up and 60 sample frames.",
+  "summary": {
+    "pass": 1,
+    "fail": 0,
+    "browserWebGpuUnavailable": 0,
+    "browserMissing": 2,
+    "automationUnavailable": 1
+  },
+  "browsers": [
+    {
+      "browser": "Chrome",
+      "releaseChannel": "stable",
+      "version": "152.0.7977.84",
+      "operatingSystem": "macOS 26.6.1 (25G76)",
+      "adapter": {
+        "vendor": "apple",
+        "architecture": "metal-3"
+      },
+      "procedure": "Production Vite build on trusted localhost; create WebGPU device; validate required limits and formats; dispatch bounded compute; draw indirect; read back count and numeric/exact-text fixtures; complete 30 warm-up and 60 sample frames.",
+      "status": "pass",
+      "capabilityResult": "pass",
+      "fixtureResult": "pass",
+      "performanceResult": "pass",
+      "benchmark": {
+        "benchmarkVersion": "webgpu-million-points-v1",
+        "contractVersion": "gpu-cluster-lod-v1",
+        "scene": "million-visible-star-points",
+        "status": "measured",
+        "timingSource": "request-animation-frame",
+        "warmupFrameCount": 30,
+        "sampleFrameCount": 60,
+        "visibleCount": 1000000,
+        "generationLatencyMilliseconds": 24.099999994039536,
+        "frameTimes": {
+          "p50Milliseconds": 16.699999999999932,
+          "p95Milliseconds": 18.100000000000136,
+          "p99Milliseconds": 18.299999999999955,
+          "maximumMilliseconds": 18.299999999999955,
+          "averageMilliseconds": 16.675,
+          "averageFps": 59.97001499250374,
+          "fpsAtP95": 55.24861878452997
+        },
+        "resourceBudget": {
+          "pointBufferBytes": 32000000,
+          "indirectBufferBytes": 16,
+          "uniformBufferBytes": 256,
+          "seedBufferBytes": 148,
+          "totalBufferBytes": 32000420,
+          "pointStrideBytes": 32,
+          "visibleCapacity": 1000000,
+          "candidateCount": 1000000,
+          "dispatchWorkgroups": 15625,
+          "workgroupSize": 64,
+          "maxBufferSize": 67108864
+        },
+        "metadata": {
+          "browser": "Chrome",
+          "browserVersion": "152.0.7977.84",
+          "operatingSystem": "macOS 26.6.1 (25G76)",
+          "adapterVendor": "apple",
+          "adapterArchitecture": "metal-3",
+          "measuredAt": "2026-09-13T02:43:18.693Z"
+        },
+        "thresholds": {
+          "minimumVisiblePoints": 900000,
+          "targetVisiblePoints": 1000000,
+          "minimumFps": 60,
+          "minimumSustainedFps": 59.5,
+          "maximumP95FrameTimeMilliseconds": 16.67,
+          "maximumGenerationLatencyMilliseconds": 1000,
+          "maximumResourceBytes": 67108864
+        },
+        "pass": true,
+        "diagnostics": []
+      },
+      "checkedAt": "2026-09-13T02:43:18.693Z"
+    },
+    {
+      "browser": "Edge",
+      "releaseChannel": "stable",
+      "version": "not-installed",
+      "operatingSystem": "macOS 26.6.1 (25G76)",
+      "adapter": {},
+      "procedure": "Production Vite build on trusted localhost; create WebGPU device; validate required limits and formats; dispatch bounded compute; draw indirect; read back count and numeric/exact-text fixtures; complete 30 warm-up and 60 sample frames.",
+      "status": "browser-missing",
+      "capabilityResult": "not-run",
+      "fixtureResult": "not-run",
+      "performanceResult": "not-run",
+      "reason": "browser-missing: Edge is not installed or available on the darwin target machine.",
+      "checkedAt": "2026-09-13T02:43:22.281Z"
+    },
+    {
+      "browser": "Firefox",
+      "releaseChannel": "stable",
+      "version": "not-installed",
+      "operatingSystem": "macOS 26.6.1 (25G76)",
+      "adapter": {},
+      "procedure": "Production Vite build on trusted localhost; create WebGPU device; validate required limits and formats; dispatch bounded compute; draw indirect; read back count and numeric/exact-text fixtures; complete 30 warm-up and 60 sample frames.",
+      "status": "browser-missing",
+      "capabilityResult": "not-run",
+      "fixtureResult": "not-run",
+      "performanceResult": "not-run",
+      "reason": "browser-missing: Firefox is not installed or available on the darwin target machine.",
+      "checkedAt": "2026-09-13T02:43:22.281Z"
+    },
+    {
+      "browser": "Safari",
+      "releaseChannel": "stable",
+      "version": "26.6",
+      "operatingSystem": "macOS 26.6.1 (25G76)",
+      "adapter": {},
+      "procedure": "Production Vite build on trusted localhost; create WebGPU device; validate required limits and formats; dispatch bounded compute; draw indirect; read back count and numeric/exact-text fixtures; complete 30 warm-up and 60 sample frames.",
+      "status": "automation-unavailable",
+      "capabilityResult": "not-run",
+      "fixtureResult": "not-run",
+      "performanceResult": "not-run",
+      "reason": "automation-unavailable: Could not create a session: You must enable 'Allow remote automation' in the Developer section of Safari Settings to control Safari via WebDriver.",
+      "checkedAt": "2026-09-13T02:43:22.580Z"
+    }
+  ]
+}

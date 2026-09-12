@@ -12,6 +12,15 @@ const SHELL = [
   "/service-worker.js",
   ...PRECACHE_ASSETS,
 ];
+const CACHEABLE_PATH =
+  /^(?:\/assets\/|\/data\/|\/manifest\.webmanifest$|\/icon(?:-[0-9]+)?\.(?:png|svg)$|\/service-worker\.js$|\/$|\/index\.html$)/;
+
+function isCacheableRequest(request) {
+  if (request.mode === "navigate") {
+    return true;
+  }
+  return CACHEABLE_PATH.test(new URL(request.url).pathname);
+}
 
 async function cacheResponse(cache, request, response) {
   if (!response.ok) {
@@ -71,13 +80,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   event.respondWith(
-    caches.match(event.request.url).then((cached) => {
+    caches.match(event.request).then((cached) => {
       if (cached !== undefined) {
         return cached;
       }
       return fetch(event.request)
         .then(async (response) => {
-          if (response.ok) {
+          if (response.ok && isCacheableRequest(event.request)) {
             try {
               const cache = await caches.open(CACHE_NAME);
               await cacheResponse(cache, event.request, response.clone());
@@ -88,14 +97,14 @@ self.addEventListener("fetch", (event) => {
           return response;
         })
         .catch(() => {
-          return caches.match(event.request.url).then((cached) => {
+          return caches.match(event.request).then((cached) => {
             if (cached !== undefined) {
               return cached;
             }
             if (event.request.mode === "navigate") {
               return caches.match("/");
             }
-            throw new Error("The requested local asset is not cached.");
+            throw new Error("The requested local asset is not cached by the WebGPU PWA shell.");
           });
         });
     }),

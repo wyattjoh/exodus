@@ -1,0 +1,15 @@
+{
+  "benchmarkVersion": "webgpu-million-points-v1",
+  "contractVersion": "gpu-cluster-lod-v1",
+  "thresholds": {
+    "minimumVisiblePoints": 900000,
+    "targetVisiblePoints": 1000000,
+    "minimumFps": 60,
+    "minimumSustainedFps": 59.5,
+    "maximumP95FrameTimeMilliseconds": 16.67,
+    "maximumGenerationLatencyMilliseconds": 1000,
+    "maximumResourceBytes": 67108864
+  },
+  "expectedScene": "million-visible-star-points",
+  "note": "Thresholds are deterministic acceptance gates. RequestAnimationFrame is presentation cadence, not an isolated GPU execution timer; its p95 is a display-jitter reference. Approximately-60-FPS acceptance uses sustained average cadence >= 59.5 FPS, while compatible measured baselines use bounded 1ms frame, 0.5 FPS cadence, and 10ms generation measurement tolerances. Measured hardware evidence is recorded separately and unavailable runs remain unavailable."
+}

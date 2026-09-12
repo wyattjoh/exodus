@@ -197,6 +197,14 @@ describe("WebGPU renderer capability seam", () => {
       message: "The WebGPU device was lost while rendering.",
       detail:
         "Reason: removed. The adapter was removed. Rendering stopped and GPU resources were released. Reload the page to retry WebGPU.",
+      diagnostics: [
+        expect.objectContaining({
+          kind: "availability",
+          name: "GPUDevice.lost",
+          required: "not-lost",
+          observed: "removed",
+        }),
+      ],
     });
     expect(bufferDestroys).toBe(2);
     expect(deviceDestroys).toBe(1);

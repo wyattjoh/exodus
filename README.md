@@ -175,6 +175,24 @@ latency at refinement depths 0/3/6, materialized counts, lower/upper arrival bou
 refinement scores. RSS and latency are machine-specific evidence rather than universal timing
 assertions; use the output to compare regressions on the target machine.
 
+The bounded WebGPU scale contract and browser compatibility matrix are documented in
+[`docs/benchmarks/webgpu-scale.md`](docs/benchmarks/webgpu-scale.md). Run
+`bun run benchmark:webgpu-scale` for the local production-build browser driver; it launches an
+installed Chrome with an isolated temporary profile, drives `/webgpu-scale-benchmark.html` through
+local CDP, validates fixture/count readback, and cleans up its server/browser resources. Use
+`--require-webgpu` to make unavailable or failing hardware a nonzero result, `--write-result PATH`
+to retain the terminal JSON, and `--write-baseline PATH` to generate a measured same-machine
+baseline from that run. The checked-in Chrome measurement is
+[`docs/benchmarks/webgpu-scale-chrome-m4-max-2026-09-13.json`](docs/benchmarks/webgpu-scale-chrome-m4-max-2026-09-13.json); the full Chrome/Safari/Edge/Firefox matrix is
+[`docs/benchmarks/webgpu-scale-conformance-m4-max-2026-09-13.json`](docs/benchmarks/webgpu-scale-conformance-m4-max-2026-09-13.json).
+The pure no-browser reference is separately named
+`bun run benchmark:webgpu-scale:reference`. Run `bun run benchmark:webgpu-scale:conformance` for
+the stable-target Chrome/Edge/Firefox/Safari matrix; its report derives the aggregate release channel from discovered rows and distinguishes missing browsers, installed-but-not-automatable browsers, browser WebGPU unavailability, and automation blockers. Unknown or mixed channel claims never become stable evidence. Host model/chip/memory/OS and host Metal support are detected locally; WebGPU adapter architecture is retained separately. The benchmark requires 30 warm-up frames, 60 samples, and one million visible points. Its rAF acceptance uses sustained average cadence near 60 FPS while p95 display jitter remains reported and strict in compatible baseline comparisons. The checked-in thresholds live in
+[`docs/benchmarks/webgpu-scale-baseline.json`](docs/benchmarks/webgpu-scale-baseline.json), with
+target-machine evidence paired in
+[`docs/benchmarks/webgpu-scale-m4-max-baseline.json`](docs/benchmarks/webgpu-scale-m4-max-baseline.json); that evidence also records explicit GPU-buffer byte formulas and pass/fail. Supported browsers must meet every required feature, limit, shader assumption, canvas format, and
+resource budget before the 3D view starts. WebGL fallback is intentionally not implemented.
+
 ## Provenance, claims, and uncertainty
 
 The public model keeps source metadata at property level. Use `novelProvenance` or

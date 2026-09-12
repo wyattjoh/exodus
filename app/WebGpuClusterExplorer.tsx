@@ -8,6 +8,7 @@ import {
   type WheelEvent,
 } from "react";
 import "./cluster-explorer.css";
+import { SUPPORTED_CLUSTER_GENERATOR_VERSIONS } from "../src/index";
 import type {
   CompiledScenario,
   JourneyModel,
@@ -24,6 +25,7 @@ import {
   buildClusterExplorerScene,
   connectionsForExplorerEntity,
   createCameraState,
+  createExplorerViewProjectionMatrix,
   findExplorerEntity,
   focusCameraOnPoint,
   orbitCamera,
@@ -43,14 +45,16 @@ import {
 } from "./cluster-explorer";
 import { SystemExplorerView } from "./SystemExplorerView";
 import {
-  createWebGpuRenderer,
+  createWebGpuScaleRenderer,
   type WebGpuApi,
   type WebGpuCanvas,
   type WebGpuFailure,
   type WebGpuRenderScene,
-  type WebGpuRenderer,
+  type WebGpuScaleRenderScene,
+  type WebGpuScaleRenderer,
   type WebGpuStartupBoundary,
 } from "./webgpu-renderer";
+import { createWebGpuScaleContract, prepareWebGpuScale } from "../src/webgpu-scale";
 
 /**
  * Background generated-region state displayed by the Cluster explorer.
@@ -99,7 +103,7 @@ const CONNECTION_ALPHA = 0.42;
 
 type StartupState =
   | { readonly state: "starting" }
-  | { readonly state: "ready"; readonly renderer: WebGpuRenderer }
+  | { readonly state: "ready"; readonly renderer: WebGpuScaleRenderer }
   | { readonly state: "failed"; readonly failure: WebGpuFailure };
 
 function provenanceColor(kind: ProvenanceKind): readonly [number, number, number, number] {
@@ -181,6 +185,45 @@ function renderScene(
   });
 }
 
+function renderScaleScene(
+  scene: ClusterExplorerScene,
+  selection: ExplorerSelection,
+  journeySample: JourneySample | undefined,
+  scenario: CompiledScenario,
+  camera: CameraState,
+  canvas: HTMLCanvasElement,
+): WebGpuScaleRenderScene {
+  const seed = scenario.seed?.value ?? scenario.seed?.text ?? scenario.id;
+  const requestedGeneratorVersion =
+    scenario.generation?.generatorVersion ?? scenario.generatorVersion;
+  const generatorVersion =
+    requestedGeneratorVersion !== undefined &&
+    SUPPORTED_CLUSTER_GENERATOR_VERSIONS.includes(
+      requestedGeneratorVersion as (typeof SUPPORTED_CLUSTER_GENERATOR_VERSIONS)[number],
+    )
+      ? requestedGeneratorVersion
+      : (SUPPORTED_CLUSTER_GENERATOR_VERSIONS[0] ?? "globular-v1");
+  const contract = createWebGpuScaleContract({
+    logicalPopulation: Math.max(1, scenario.logicalPopulation ?? scene.systems.length),
+    seed,
+    generatorVersion,
+    regionRadiusMeters: Math.max(1, scene.extentMeters),
+  });
+  const viewport = viewportFor(canvas);
+  const preparation = prepareWebGpuScale(contract, {
+    viewProjectionMatrix: Array.from(createExplorerViewProjectionMatrix(camera, viewport)),
+    viewportWidth: viewport.width,
+    viewportHeight: viewport.height,
+    cameraDistance: camera.distance,
+    far: camera.far ?? 100,
+    worldRadiusMeters: contract.regionRadiusMeters,
+  });
+  return Object.freeze({
+    preparation,
+    overlay: renderScene(scene, selection, journeySample),
+  });
+}
+
 function webGpuApi(): WebGpuApi | undefined {
   if (typeof navigator === "undefined") {
     return undefined;
@@ -253,7 +296,7 @@ export function WebGpuClusterExplorer({
   journeySample,
 }: WebGpuClusterExplorerProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rendererRef = useRef<WebGpuRenderer | undefined>(undefined);
+  const rendererRef = useRef<WebGpuScaleRenderer | undefined>(undefined);
   const cameraRef = useRef<CameraState>(createCameraState(undefined));
   const pointerRef = useRef<ExplorerPointerGesture | undefined>(undefined);
   const [startup, setStartup] = useState<StartupState>({ state: "starting" });
@@ -294,7 +337,7 @@ export function WebGpuClusterExplorer({
       canvas: canvas as unknown as WebGpuCanvas,
       requirements: undefined,
     };
-    void createWebGpuRenderer(boundary, {
+    void createWebGpuScaleRenderer(boundary, {
       scheduler: undefined,
       onRenderError: (error) => {
         if (active) {
@@ -341,11 +384,15 @@ export function WebGpuClusterExplorer({
 
   useEffect(() => {
     const renderer = rendererRef.current;
-    if (renderer === undefined || cameraRevision < 0) {
+    const canvas = canvasRef.current;
+    if (renderer === undefined || canvas === null || cameraRevision < 0) {
       return;
     }
-    renderer.setScene(renderScene(scene, selection, journeySample), cameraRef.current);
-  }, [journeySample, scene, selection, cameraRevision]);
+    renderer.setScaleScene(
+      renderScaleScene(scene, selection, journeySample, scenario, cameraRef.current, canvas),
+      cameraRef.current,
+    );
+  }, [journeySample, scene, selection, scenario, cameraRevision]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -361,11 +408,14 @@ export function WebGpuClusterExplorer({
     const observer = new ResizeObserver(() => {
       const viewport = viewportFor(canvas);
       renderer.resize(viewport.width, viewport.height, globalThis.devicePixelRatio || 1);
-      renderer.setScene(renderScene(scene, selection, journeySample), cameraRef.current);
+      renderer.setScaleScene(
+        renderScaleScene(scene, selection, journeySample, scenario, cameraRef.current, canvas),
+        cameraRef.current,
+      );
     });
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [journeySample, scene, selection, startup.state]);
+  }, [journeySample, scene, selection, scenario, startup.state]);
 
   const focus = (point: ExplorerPoint): void => {
     cameraRef.current = focusCameraOnPoint(cameraRef.current, point.position);
@@ -536,6 +586,18 @@ export function WebGpuClusterExplorer({
           <p>{startup.failure.message}</p>
           <p className="failure-detail">{startup.failure.detail}</p>
           <code>{startup.failure.code}</code>
+          {startup.failure.diagnostics.length > 0 ? (
+            <details className="failure-diagnostics">
+              <summary>Compatibility diagnostics</summary>
+              <ul>
+                {startup.failure.diagnostics.map((diagnostic, index) => (
+                  <li key={`${diagnostic.kind}:${diagnostic.name}:${index}`}>
+                    <strong>{diagnostic.name}</strong>: {diagnostic.message}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
         </section>
       ) : (
         <div className="explorer-layout">

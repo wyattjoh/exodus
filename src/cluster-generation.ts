@@ -866,8 +866,42 @@ function systemDesignation(context: GeneratorContext, index: number): string {
   return `GEN-${context.seedToken}-${String(index).padStart(4, "0")}`;
 }
 
+function generatedSystemIdFromTokens(
+  versionToken: string,
+  seedToken: string,
+  index: number,
+): StableId {
+  return `system:generated:${versionToken}:${seedToken}:${String(index).padStart(4, "0")}` as StableId;
+}
+
 function generatedSystemId(context: GeneratorContext, index: number): StableId {
-  return `system:generated:${context.versionToken}:${context.seedToken}:${String(index).padStart(4, "0")}` as StableId;
+  return generatedSystemIdFromTokens(context.versionToken, context.seedToken, index);
+}
+
+/**
+ * Derives the exact public StableId used by the retained CPU generator for one logical System.
+ *
+ * @param seed - Numeric or exact textual generator seed.
+ * @param generatorVersion - Retained CPU generator version.
+ * @param logicalIndex - Zero-based logical System index.
+ * @returns The unchanged deterministic generated System StableId.
+ * @throws RangeError when the seed, version, or logical index is invalid.
+ */
+export function generatedClusterSystemId(
+  seed: ClusterGenerationSeed,
+  generatorVersion: string,
+  logicalIndex: number,
+): StableId {
+  const seedValue = readSeed(seed);
+  const version = readGeneratorVersion(generatorVersion);
+  if (!Number.isSafeInteger(logicalIndex) || logicalIndex < 0) {
+    throw new RangeError("logicalIndex must be a non-negative safe integer.");
+  }
+  return generatedSystemIdFromTokens(
+    compactToken(version),
+    compactToken(seedValue.identity),
+    logicalIndex,
+  );
 }
 
 function generatedAnchorId(context: GeneratorContext, index: number): StableId {

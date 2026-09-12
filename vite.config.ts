@@ -18,17 +18,24 @@ function productionServiceWorkerPlugin(): Plugin {
     name: "centauri-production-service-worker",
     apply: "build",
     generateBundle(_options, bundle) {
-      const index = bundle["index.html"];
-      const indexHtml =
-        index?.type === "asset" && typeof index.source === "string" ? index.source : "";
-      const precacheAssets = new Set<string>(["/", "/index.html", ...PUBLIC_PRECACHED_ASSETS]);
-      for (const match of indexHtml.matchAll(/(?:src|href)="(\/[^\"]+)"/g)) {
-        const url = match[1];
-        if (url !== undefined) {
-          precacheAssets.add(url);
-        }
-      }
+      const precacheAssets = new Set<string>([
+        "/",
+        "/index.html",
+        "/webgpu-scale-benchmark.html",
+        ...PUBLIC_PRECACHED_ASSETS,
+      ]);
       for (const [fileName, artifact] of Object.entries(bundle)) {
+        if (artifact.type === "asset" && /\.html$/i.test(fileName)) {
+          precacheAssets.add(`/${fileName}`);
+          if (typeof artifact.source === "string") {
+            for (const match of artifact.source.matchAll(/(?:src|href)="(\/[^\"]+)"/g)) {
+              const url = match[1];
+              if (url !== undefined) {
+                precacheAssets.add(url);
+              }
+            }
+          }
+        }
         if (
           artifact.type === "chunk" ||
           (artifact.type === "asset" && /\.(?:css|js)$/i.test(fileName))
@@ -72,6 +79,12 @@ export default defineConfig({
   build: {
     target: "es2022",
     sourcemap: true,
+    rollupOptions: {
+      input: {
+        index: resolve("index.html"),
+        webgpuScaleBenchmark: resolve("webgpu-scale-benchmark.html"),
+      },
+    },
   },
   worker: {
     format: "es",

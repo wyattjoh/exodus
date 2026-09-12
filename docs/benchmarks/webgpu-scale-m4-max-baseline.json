@@ -1,0 +1,65 @@
+{
+  "benchmarkVersion": "webgpu-million-points-v1",
+  "contractVersion": "gpu-cluster-lod-v1",
+  "scene": "million-visible-star-points",
+  "metadata": {
+    "browser": "Chrome",
+    "browserVersion": "152.0.7977.84",
+    "operatingSystem": "macOS 26.6.1 (25G76)",
+    "adapterVendor": "apple",
+    "adapterArchitecture": "metal-3",
+    "measuredAt": "2026-09-13T02:43:09.131Z"
+  },
+  "machine": {
+    "model": "Mac16,6",
+    "chip": "Apple M4 Max",
+    "memory": "36 GiB",
+    "operatingSystem": "macOS 26.6.1 (25G76)",
+    "hostGraphicsApi": {
+      "name": "Metal",
+      "version": "Metal 4"
+    }
+  },
+  "timingSource": "request-animation-frame",
+  "warmupFrameCount": 30,
+  "sampleFrameCount": 60,
+  "visibleCount": 1000000,
+  "generationLatencyMilliseconds": 21.100000008940697,
+  "frameTimes": {
+    "p50Milliseconds": 16.700000000000045,
+    "p95Milliseconds": 18.200000000000045,
+    "p99Milliseconds": 18.5,
+    "maximumMilliseconds": 18.5,
+    "averageMilliseconds": 16.700000000000003,
+    "averageFps": 59.88023952095807,
+    "fpsAtP95": 54.94505494505481
+  },
+  "pass": true,
+  "resourceBudget": {
+    "pointBufferBytes": 32000000,
+    "indirectBufferBytes": 16,
+    "uniformBufferBytes": 256,
+    "seedBufferBytes": 148,
+    "totalBufferBytes": 32000420,
+    "pointStrideBytes": 32,
+    "visibleCapacity": 1000000,
+    "candidateCount": 1000000,
+    "dispatchWorkgroups": 15625,
+    "workgroupSize": 64,
+    "maxBufferSize": 67108864
+  },
+  "resourceSemantics": {
+    "unit": "bytes",
+    "scope": "GPU buffer allocations only; excludes browser process and driver allocations",
+    "pointBufferFormula": "visibleCapacity × pointStrideBytes",
+    "totalBufferFormula": "pointBufferBytes + indirectBufferBytes + uniformBufferBytes + seedBufferBytes",
+    "pointBufferBytes": 32000000,
+    "indirectBufferBytes": 16,
+    "uniformBufferBytes": 256,
+    "seedBufferBytes": 148,
+    "totalBufferBytes": 32000420,
+    "hardAllocationCapBytes": 32016656,
+    "deviceMaxBufferSizeBytes": 67108864
+  },
+  "resourceBytes": 32000420
+}

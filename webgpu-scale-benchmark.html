@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>WebGPU scale benchmark</title>
+    <style>
+      :root {
+        color: #dce7e6;
+        background: #0a0f12;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      body {
+        margin: 2rem auto;
+        max-width: 70rem;
+        padding: 0 1rem;
+      }
+      canvas {
+        display: block;
+        width: min(100%, 64rem);
+        height: 24rem;
+        border: 1px solid #31504d;
+        background: #0d1719;
+      }
+      pre {
+        overflow: auto;
+        padding: 1rem;
+        border: 1px solid #31504d;
+        background: #101c1e;
+        white-space: pre-wrap;
+      }
+      .unavailable {
+        color: #f6c177;
+      }
+      .pass {
+        color: #9bd6a5;
+      }
+      .fail {
+        color: #f39a9a;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>WebGPU scale benchmark</h1>
+      <p>
+        This page is an explicit secure-origin browser harness. It never falls back to WebGL or
+        2D; unavailable adapters are recorded as unavailable.
+      </p>
+      <canvas id="webgpu-scale-canvas" width="1920" height="1080"></canvas>
+      <pre id="webgpu-scale-result" aria-live="polite">Running…</pre>
+    </main>
+    <script type="module" src="/app/webgpu-scale-benchmark.ts"></script>
+  </body>
+</html>

@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type JSX,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent,

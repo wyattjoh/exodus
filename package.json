@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.4.0",
   "scripts": {
     "demo": "bun run scripts/minimal-scenario.ts",
     "worker-demo": "bun run scripts/worker-planning-demo.ts",
@@ -13,6 +14,13 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
+    "alchemy:dev": "npm_execpath= npm_config_user_agent= alchemy dev",
+    "plan": "npm_execpath= npm_config_user_agent= alchemy plan",
+    "deploy": "npm_execpath= npm_config_user_agent= alchemy deploy",
+    "deploy:ci": "npm_execpath= npm_config_user_agent= alchemy deploy --yes",
+    "destroy": "npm_execpath= npm_config_user_agent= alchemy destroy",
+    "bootstrap:cloudflare": "npm_execpath= npm_config_user_agent= alchemy cloudflare bootstrap",
+    "bootstrap:ci": "npm_execpath= npm_config_user_agent= alchemy deploy alchemy.ci.ts --profile admin --yes",
     "browser:dev": "bun run dev",
     "browser:build": "bun run build",
     "browser:preview": "bun run preview",
@@ -27,16 +35,29 @@
     "check": "bun run format:check && bun run lint && bun run typecheck && bun test"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "effect": "4.0.0-rc.112",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@effect/platform-bun": "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.0-rc.112",
     "@playwright/test": "^1.63.0",
     "@types/bun": "latest",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "alchemy": "2.0.0-beta.77",
     "typescript": "^5.7.2",
-    "vite": "^6.0.7"
+    "vite": "8.0.7"
+  },
+  "resolutions": {
+    "effect": "4.0.0-rc.112",
+    "@effect/platform-node-shared": "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.0-rc.112",
+    "@effect/platform-bun": "4.0.0-rc.112",
+    "@effect/sql-d1": "4.0.0-rc.112",
+    "@effect/sql-sqlite-do": "4.0.0-rc.112",
+    "@effect/vitest": "4.0.0-rc.112"
   }
 }

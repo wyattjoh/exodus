@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore, type JSX } from "react";
 import type {
   CompiledScenario,
   JourneyModel,

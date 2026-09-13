@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "types": ["bun-types"]
   },
-  "include": ["app", "src", "scripts", "test", "vite.config.ts"]
+  "include": ["app", "src", "scripts", "test", "alchemy.run.ts", "alchemy.ci.ts", "vite.config.ts"]
 }

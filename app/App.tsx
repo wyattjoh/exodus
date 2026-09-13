@@ -6,6 +6,7 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
+  type JSX,
 } from "react";
 import {
   createJourneyModel,

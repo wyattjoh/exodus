@@ -53,6 +53,53 @@ bun run build
 bun run preview
 ```
 
+## Cloudflare deployment
+
+[`alchemy.run.ts`](alchemy.run.ts) deploys the existing Vite SPA with
+`Cloudflare.Website.Vite`. Cloudflare serves unknown paths through `index.html`, so browser deep
+links continue to load the SPA. The stack has no custom domain, route, or fixed Worker name; its
+only output is the generated `workers.dev` URL.
+
+Alchemy commands intentionally omit `--stage`. Local runs and GitHub Actions therefore use
+Alchemy's default stage for their operating-system user instead of sharing a pinned `prod` stage.
+Pull requests run the checks but do not deploy a preview stage.
+
+```sh
+bun run alchemy:dev
+bun run plan
+bun run deploy
+bun run destroy
+```
+
+`bun run dev` remains the direct Vite development server. `bun run alchemy:dev` runs the whole
+Alchemy stack locally. Deploy and destroy commands operate on real Cloudflare resources; inspect
+the plan before approving either one.
+
+### One-time Cloudflare and GitHub Actions setup
+
+1. Authenticate Alchemy to the target Cloudflare account with a narrowly scoped everyday profile.
+2. Run `bun run bootstrap:cloudflare` once to create the remote state store used by
+   `Cloudflare.state()`. Do not run it from CI.
+3. Create a separate elevated profile with
+   `npm_execpath= npm_config_user_agent= ./node_modules/.bin/alchemy login --profile admin`. This
+   credential needs Cloudflare API-token write access and must remain on the developer machine.
+4. From the main checkout—not a worktree—run `bun run bootstrap:ci`. The local
+   [`alchemy.ci.ts`](alchemy.ci.ts) stack mints a stage-derived deployment token limited to Worker
+   scripts, the `workers.dev` account setting, and the Secrets Store access required by
+   `Cloudflare.state()`.
+5. Add the resulting values to the GitHub repository's Actions secrets without printing them in
+   logs:
+   - `CLOUDFLARE_API_TOKEN` — the scoped token minted by `alchemy.ci.ts`.
+   - `CLOUDFLARE_ACCOUNT_ID` — the account ID returned by the bootstrap (not intrinsically secret,
+     but kept in the same credential boundary).
+
+The bootstrap uses `Alchemy.localState()`. Its ignored `.alchemy/` directory contains the token
+value in plaintext because Cloudflare returns that value only once; treat the directory as a
+credential store, never commit it, and use the same main checkout when rotating the token. The
+GitHub workflow exposes Cloudflare credentials only to the deploy step. It serializes deployments
+and passes `--yes` because Alchemy's non-interactive plain mode never prompts or applies changes
+without explicit approval.
+
 Run the 1440×900 MacBook HUD and overlap check with Playwright:
 
 ```sh

@@ -1,5 +1,12 @@
 node_modules/
 coverage/
 dist/
+.alchemy/
+.wrangler/
 .scratch/
+.env
+.env.*
+!.env.example
+*.local
+*.tsbuildinfo
 .DS_Store

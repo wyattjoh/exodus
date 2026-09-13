@@ -31,13 +31,13 @@ jobs:
         run: bun run build
 
   deploy:
-    name: Deploy default stage
+    name: Deploy production
     if: github.event_name != 'pull_request'
     needs: check
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: deploy-default-stage
+      group: deploy-prod
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

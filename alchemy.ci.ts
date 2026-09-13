@@ -1,3 +1,12 @@
+/**
+ * The one-shot bootstrap stack that mints the scoped Cloudflare credential used
+ * by GitHub Actions to deploy `alchemy.run.ts`.
+ *
+ * Run `bun run bootstrap:ci` from the main checkout under the elevated `admin`
+ * profile. Its local state contains the token value in plaintext and must stay
+ * gitignored. Alchemy returns a token value only when it is first created, so
+ * this stack deliberately refuses to run from another directory or worktree.
+ */
 import { statSync } from "node:fs";
 import * as path from "node:path";
 
@@ -33,7 +42,7 @@ if (wrongLocation !== undefined) {
 }
 
 export default Alchemy.Stack(
-  "ExodusTimeDialationCI",
+  "exodus-ci",
   {
     providers: Cloudflare.providers(),
     state: Alchemy.localState(),
@@ -42,6 +51,7 @@ export default Alchemy.Stack(
     const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
 
     const deployToken = yield* Cloudflare.ApiToken.AccountApiToken("DeployToken", {
+      name: "exodus-github-actions",
       accountId,
       policies: [
         {
@@ -50,6 +60,7 @@ export default Alchemy.Stack(
             "Workers Scripts Write",
             "Account Settings Write",
             "Secrets Store Write",
+            "Workers Tail Read",
           ],
           resources: {
             [`com.cloudflare.api.account.${accountId}`]: "*",

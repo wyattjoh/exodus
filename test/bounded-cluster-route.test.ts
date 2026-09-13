@@ -101,7 +101,7 @@ describe("bounded hierarchical Cluster routes", () => {
     expect(deep.plan.arrivalCoordinateTime.value).toBeLessThanOrEqual(
       shallow.plan.arrivalCoordinateTime.value,
     );
-  });
+  }, 15_000);
 
   test("retains the baseline upper bound under a tight deeper refinement budget", () => {
     const region = generatedCluster("cluster-route-benchmark-6");

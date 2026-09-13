@@ -316,6 +316,16 @@ describe("bounded WebGPU compute renderer seam", () => {
     expect(WEBGPU_SCALE_SHADER).toContain("renderParams.focusStrength");
   });
 
+  test("keeps an explicit return after the reservation loop for strict WGSL validators", () => {
+    const functionStart = WEBGPU_SCALE_SHADER.indexOf("fn reserveOutputRange");
+    const functionEnd = WEBGPU_SCALE_SHADER.indexOf("@compute", functionStart);
+    const reservationFunction = WEBGPU_SCALE_SHADER.slice(functionStart, functionEnd);
+
+    expect(reservationFunction).toContain("var reservation = vec2<u32>(0u, 0u);");
+    expect(reservationFunction).toContain("break;");
+    expect(reservationFunction).toMatch(/return reservation;\s*}\s*$/);
+  });
+
   test("enables alpha blending for fogged generated points and CPU overlays", async () => {
     const pipelines: unknown[] = [];
     const result = await createWebGpuScaleRenderer({

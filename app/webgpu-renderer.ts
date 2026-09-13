@@ -695,18 +695,22 @@ fn reserveOutputRange(requested: u32) -> vec2<u32> {
     return vec2<u32>(0u, 0u);
   }
   var current = atomicLoad(&drawArgs[0]);
+  var reservation = vec2<u32>(0u, 0u);
   loop {
     if (current >= params.visibleCapacity) {
-      return vec2<u32>(params.visibleCapacity, 0u);
+      reservation = vec2<u32>(params.visibleCapacity, 0u);
+      break;
     }
     let available = params.visibleCapacity - current;
     let reserved = min(requested, available);
     let result = atomicCompareExchangeWeak(&drawArgs[0], current, current + reserved);
     if (result.exchanged) {
-      return vec2<u32>(current, reserved);
+      reservation = vec2<u32>(current, reserved);
+      break;
     }
     current = result.old_value;
   }
+  return reservation;
 }
 
 @compute @workgroup_size(64)

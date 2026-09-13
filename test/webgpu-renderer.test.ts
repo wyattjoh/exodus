@@ -92,6 +92,8 @@ describe("WebGPU renderer capability seam", () => {
     expect(WEBGPU_STELLAR_BACKGROUND_SHADER).toContain("backgroundVertex");
     expect(WEBGPU_STELLAR_BACKGROUND_SHADER).toContain("backgroundFragment");
     expect(WEBGPU_STELLAR_BACKGROUND_SHADER).toContain("rust");
+    expect(WEBGPU_STELLAR_BACKGROUND_SHADER).not.toContain("let star");
+    expect(WEBGPU_STELLAR_BACKGROUND_SHADER).not.toContain("hash(cell)");
     expect(WEBGPU_STELLAR_BACKGROUND_SHADER).not.toContain("time");
   });
   test("returns an accessible hard failure when navigator.gpu is absent", async () => {

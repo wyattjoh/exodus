@@ -2,13 +2,17 @@ import { describe, expect, test } from "bun:test";
 
 import {
   beginExplorerPointerGesture,
+  buildClusterExplorerNeighborhood,
+  buildClusterExplorerNeighborhoodAt,
   buildClusterExplorerScene,
   connectionsForExplorerEntity,
   createCameraState,
   createExplorerSelection,
   explorerFocusConnectionOpacity,
   explorerFocusPointOpacity,
+  focusCameraOnNeighborhood,
   focusCameraOnPoint,
+  interpolateCameraState,
   normalizeExplorerSelection,
   orbitCamera,
   pickExplorerEntity,
@@ -70,6 +74,67 @@ describe("Cluster explorer scene and selection seam", () => {
       orbitalAnchorId: "anchor:aurora-star",
     });
     expect(scene.connections[0]?.name).toContain("Link");
+  });
+
+  test("builds a bounded, selectable neighborhood around one materialized System", () => {
+    const fullScene = buildClusterExplorerScene(
+      requireScenario(multiLegJourneyScenario),
+      provenanceKinds,
+    );
+    const neighborhood = buildClusterExplorerNeighborhood(fullScene, "system:aurora", 1);
+    const camera = focusCameraOnNeighborhood(
+      createCameraState(undefined),
+      neighborhood,
+      "system:aurora",
+    );
+
+    const focusedSystem = neighborhood.systems[0];
+    if (focusedSystem === undefined) {
+      throw new Error("Expected the focused System in its materialized neighborhood.");
+    }
+    expect(neighborhood.systems).toHaveLength(2);
+    expect(focusedSystem.id).toBe("system:aurora");
+    expect(neighborhood.entities).toEqual(neighborhood.systems);
+    expect(neighborhood.stars).toEqual([]);
+    expect(neighborhood.gates).toEqual([]);
+    expect(neighborhood.connections).toEqual([]);
+    expect(camera.target).toEqual(focusedSystem.position);
+    expect(camera.distance).toBeGreaterThanOrEqual(0.18);
+    expect(camera.distance).toBeLessThanOrEqual(1.6);
+  });
+
+  test("updates the bounded neighborhood around a moving camera target", () => {
+    const generated = generateClusterRegion({
+      logicalPopulation: 32,
+      materializedSystemCount: 8,
+      seed: "moving-neighborhood-test",
+      generatorVersion: "globular-v1",
+    });
+    const fullScene = buildClusterExplorerScene(generated.scenario, provenanceKinds);
+    const destination = fullScene.systems.at(-1);
+    const center = fullScene.systems[0]?.position;
+    if (destination === undefined || center === undefined) {
+      throw new Error("Expected generated Systems for a moving neighborhood.");
+    }
+    const neighborhood = buildClusterExplorerNeighborhoodAt(fullScene, center, 3, [destination.id]);
+
+    expect(neighborhood.systems).toHaveLength(3);
+    expect(neighborhood.systems[0]?.id).toBe(destination.id);
+    expect(neighborhood.systems.map((system) => system.id)).toContain(destination.id);
+    expect(neighborhood.entities).toEqual(neighborhood.systems);
+  });
+
+  test("eases camera travel between materialized System neighborhoods", () => {
+    const from = createCameraState([0, 0, 0]);
+    const to = Object.freeze({
+      ...from,
+      target: [1, 2, 3] as const,
+      distance: 1,
+    });
+
+    expect(interpolateCameraState(from, to, 0)).toEqual(from);
+    expect(interpolateCameraState(from, to, 1)).toEqual(to);
+    expect(interpolateCameraState(from, to, 0.25).target).toEqual([0.15625, 0.3125, 0.46875]);
   });
 
   test("keeps generated provenance visible and filterable after materialization", () => {

@@ -563,8 +563,8 @@ const MAX_COMPUTE_WORKGROUPS_PER_DIMENSION = 65_535;
 /**
  * Procedural full-screen WebGPU background for the Cluster map.
  *
- * The shader is static, so it respects reduced-motion preferences while rendering stellar gas,
- * rust nebulae, and a sparse amber star field entirely on the GPU.
+ * The shader is static, so it respects reduced-motion preferences while rendering stellar gas
+ * and rust nebulae entirely on the GPU. Spatial stars are rendered separately in the 3D scene.
  */
 export const WEBGPU_STELLAR_BACKGROUND_SHADER = /* wgsl */ `
 struct BackgroundVertex {
@@ -581,21 +581,14 @@ fn backgroundVertex(@builtin(vertex_index) index: u32) -> BackgroundVertex {
   return output;
 }
 
-fn hash(point: vec2<f32>) -> f32 {
-  return fract(sin(dot(point, vec2<f32>(127.1, 311.7))) * 43758.5453);
-}
-
 @fragment
 fn backgroundFragment(input: BackgroundVertex) -> @location(0) vec4<f32> {
   let uv = input.uv;
   let gasA = exp(-7.0 * length(uv - vec2<f32>(0.22, 0.63)));
   let gasB = exp(-10.0 * length(uv - vec2<f32>(0.76, 0.28)));
-  let cell = floor(uv * 220.0);
-  let star = select(0.0, 1.0, hash(cell) > 0.9965) * (0.55 + 0.45 * hash(cell + 4.0));
   let ink = vec3<f32>(0.008, 0.006, 0.009);
   let rust = vec3<f32>(0.32, 0.075, 0.025) * gasA + vec3<f32>(0.16, 0.045, 0.02) * gasB;
-  let amber = vec3<f32>(1.0, 0.61, 0.23) * star;
-  return vec4<f32>(ink + rust + amber, 1.0);
+  return vec4<f32>(ink + rust, 1.0);
 }
 `;
 

@@ -194,6 +194,8 @@ const CAMERA_MAX_PITCH = Math.PI / 2 - 0.05;
 const DEFAULT_CAMERA_DISTANCE = 3.2;
 const DEFAULT_CAMERA_YAW = Math.PI / 4;
 const DEFAULT_CAMERA_PITCH = 0.36;
+const NEIGHBORHOOD_MIN_CAMERA_DISTANCE = 0.18;
+const NEIGHBORHOOD_MAX_CAMERA_DISTANCE = 1.6;
 
 function vector(x: number, y: number, z: number): ExplorerVector3 {
   return Object.freeze([x, y, z]) as ExplorerVector3;
@@ -368,6 +370,80 @@ export function buildClusterExplorerScene(
     entities: Object.freeze([...systems, ...stars, ...gates]),
     connections: Object.freeze(connections),
   });
+}
+
+/**
+ * Builds a bounded System-only neighborhood around an arbitrary Cluster position.
+ *
+ * Retained Systems remain visible while the nearest remaining Systems are selected around the
+ * moving center. This lets camera travel reveal materialized Systems as they become local.
+ *
+ * @param scene - Complete filtered Cluster scene.
+ * @param center - Normalized Cluster position driving proximity selection.
+ * @param maximumSystemCount - Maximum visible System count, expanded to fit retained Systems.
+ * @param retainedSystemIds - Systems that must remain visible during a transition.
+ * @returns A sparse System-only scene centered on the supplied position.
+ */
+export function buildClusterExplorerNeighborhoodAt(
+  scene: ClusterExplorerScene,
+  center: ExplorerVector3,
+  maximumSystemCount = 17,
+  retainedSystemIds: readonly StableId[] = [],
+): ClusterExplorerScene {
+  const retainedIds = new Set(retainedSystemIds);
+  const retained = retainedSystemIds.flatMap((id) => {
+    const system = scene.systems.find((candidate) => candidate.id === id);
+    return system === undefined ? [] : [system];
+  });
+  const count = Math.max(retained.length, Math.max(0, Math.trunc(maximumSystemCount)));
+  const nearby = scene.systems
+    .filter((system) => !retainedIds.has(system.id))
+    .map((system) => ({ system, separation: distance(center, system.position) }))
+    .sort(
+      (left, right) =>
+        left.separation - right.separation ||
+        left.system.designation.localeCompare(right.system.designation),
+    )
+    .slice(0, Math.max(0, count - retained.length))
+    .map(({ system }) => system);
+  const systems = Object.freeze([...retained, ...nearby]);
+  return Object.freeze({
+    ...scene,
+    systems,
+    stars: Object.freeze([]),
+    gates: Object.freeze([]),
+    entities: systems,
+    connections: Object.freeze([]),
+  });
+}
+
+/**
+ * Builds a bounded System-only neighborhood around one materialized System.
+ *
+ * Cluster-scale stars and Gates collapse onto their parent System at this scale, so the
+ * neighborhood deliberately exposes one selectable marker per System. The separate AU-scale view
+ * remains responsible for rendering the focused System's internal geometry.
+ *
+ * @param scene - Complete filtered Cluster scene.
+ * @param focusedSystemId - System to place at the center of the neighborhood.
+ * @param maximumNearbySystems - Maximum number of neighboring Systems to retain.
+ * @returns A sparse scene containing the focused System and its nearest materialized neighbors.
+ */
+export function buildClusterExplorerNeighborhood(
+  scene: ClusterExplorerScene,
+  focusedSystemId: StableId | undefined,
+  maximumNearbySystems = 16,
+): ClusterExplorerScene {
+  const focused = scene.systems.find((system) => system.id === focusedSystemId) ?? scene.systems[0];
+  if (focused === undefined) {
+    return buildClusterExplorerNeighborhoodAt(scene, vector(0, 0, 0), 0);
+  }
+  return buildClusterExplorerNeighborhoodAt(
+    scene,
+    focused.position,
+    Math.max(0, Math.trunc(maximumNearbySystems)) + 1,
+    [focused.id],
+  );
 }
 
 function searchScore(point: ExplorerPoint, query: string): number | undefined {
@@ -738,6 +814,65 @@ export function focusCameraOnPoint(camera: CameraState, position: ExplorerVector
     ...camera,
     target: position,
     distance: Math.max(CAMERA_MIN_DISTANCE * 2, Math.min(camera.distance * 0.45, 2.8)),
+  });
+}
+
+/**
+ * Frames a sparse materialized neighborhood around its focused System.
+ *
+ * @param camera - Current Cluster camera whose orbit angles should be retained.
+ * @param scene - Bounded neighborhood scene.
+ * @param focusedSystemId - System that should occupy the camera target.
+ * @returns A camera centered on the System with a distance fitted to nearby materialized Systems.
+ */
+export function focusCameraOnNeighborhood(
+  camera: CameraState,
+  scene: ClusterExplorerScene,
+  focusedSystemId: StableId | undefined,
+): CameraState {
+  const focused = scene.systems.find((system) => system.id === focusedSystemId) ?? scene.systems[0];
+  if (focused === undefined) {
+    return camera;
+  }
+  const radius = scene.systems.reduce(
+    (maximum, system) => Math.max(maximum, distance(focused.position, system.position)),
+    0,
+  );
+  return Object.freeze({
+    ...camera,
+    target: focused.position,
+    distance: Math.max(
+      NEIGHBORHOOD_MIN_CAMERA_DISTANCE,
+      Math.min(NEIGHBORHOOD_MAX_CAMERA_DISTANCE, radius * 2.4),
+    ),
+  });
+}
+
+/**
+ * Interpolates between two Cluster cameras with eased travel.
+ *
+ * @param from - Camera at the beginning of the transition.
+ * @param to - Camera at the end of the transition.
+ * @param progress - Linear transition progress from zero to one.
+ * @returns An immutable camera along a smoothstep-eased path.
+ */
+export function interpolateCameraState(
+  from: CameraState,
+  to: CameraState,
+  progress: number,
+): CameraState {
+  const eased = smoothstep(0, 1, progress);
+  const interpolate = (start: number, end: number): number => start + (end - start) * eased;
+  return Object.freeze({
+    target: vector(
+      interpolate(from.target[0], to.target[0]),
+      interpolate(from.target[1], to.target[1]),
+      interpolate(from.target[2], to.target[2]),
+    ),
+    yaw: interpolate(from.yaw, to.yaw),
+    pitch: interpolate(from.pitch, to.pitch),
+    distance: interpolate(from.distance, to.distance),
+    far: progress >= 1 ? to.far : from.far,
   });
 }
 

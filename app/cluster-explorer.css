@@ -91,6 +91,106 @@
   cursor: grabbing;
 }
 
+.cluster-system-markers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cluster-system-marker {
+  position: absolute;
+  display: grid;
+  grid-template-columns: 18px auto;
+  align-items: center;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 4px 8px 4px 5px;
+  transform: translate(-17px, -17px);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(207, 216, 213, 0.74);
+  font-family: "DM Mono", ui-monospace, monospace;
+  text-align: left;
+  pointer-events: auto;
+  animation: cluster-system-marker-reveal 180ms ease-out;
+}
+
+@keyframes cluster-system-marker-reveal {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.cluster-system-marker i {
+  grid-row: 1 / 3;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255, 205, 137, 0.72);
+  border-radius: 50%;
+  background: #fff2cf;
+  box-shadow: 0 0 5px #fff2cf, 0 0 14px rgba(255, 174, 73, 0.72);
+}
+
+.cluster-system-marker span,
+.cluster-system-marker small {
+  display: none;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cluster-system-marker span {
+  color: #fff1d4;
+  font-size: 0.62rem;
+}
+
+.cluster-system-marker small {
+  color: rgba(207, 216, 213, 0.62);
+  font-size: 0.52rem;
+}
+
+.cluster-system-marker:hover,
+.cluster-system-marker:focus-visible,
+.cluster-system-marker.is-focused,
+.cluster-system-marker.is-selected {
+  z-index: 2;
+  grid-template-columns: 18px minmax(0, auto);
+  border-color: rgba(255, 205, 137, 0.38);
+  background: rgba(18, 10, 10, 0.9);
+  outline: none;
+}
+
+.cluster-system-marker:hover span,
+.cluster-system-marker:hover small,
+.cluster-system-marker:focus-visible span,
+.cluster-system-marker:focus-visible small,
+.cluster-system-marker.is-focused span,
+.cluster-system-marker.is-focused small,
+.cluster-system-marker.is-selected span,
+.cluster-system-marker.is-selected small {
+  display: block;
+}
+
+.cluster-system-marker.is-focused i {
+  width: 14px;
+  height: 14px;
+  border-color: #fff7e8;
+  background: #ffb758;
+  box-shadow: 0 0 8px #fff2cf, 0 0 24px rgba(255, 142, 49, 0.92);
+}
+
+.cluster-system-marker.is-selected:not(.is-focused) i {
+  border-color: #fff;
+  background: var(--mint);
+  box-shadow: 0 0 8px #fff, 0 0 20px rgba(140, 224, 197, 0.8);
+}
+
 .cluster-context-menu {
   position: fixed;
   z-index: 20;
@@ -139,7 +239,8 @@
   white-space: nowrap;
 }
 
-.focus-transition-label {
+.focus-transition-label,
+.neighborhood-transition-label {
   border-color: rgba(255, 205, 137, 0.48);
   color: var(--amber);
 }
@@ -342,6 +443,10 @@
   font-size: 0.63rem;
 }
 
+.inspector-actions .inspector-enter-system {
+  grid-column: 1 / -1;
+}
+
 .connection-list {
   display: grid;
   gap: 7px;
@@ -460,6 +565,7 @@
 
 .immersive-map .explorer-heading,
 .map-hud-intro,
+.map-neighborhood-status,
 .map-route-status {
   position: relative;
   z-index: 2;
@@ -478,6 +584,41 @@
 
 .map-hud-intro {
   margin: 0 0 8px;
+}
+
+.map-neighborhood-status {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  max-width: min(620px, calc(100% - 36px));
+  margin: 0 0 8px;
+  gap: 12px;
+}
+
+.map-neighborhood-status > span:first-child {
+  display: grid;
+  min-width: 180px;
+}
+
+.map-neighborhood-status small,
+.map-neighborhood-status code,
+.map-neighborhood-count {
+  color: var(--faint);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.58rem;
+}
+
+.map-neighborhood-status strong {
+  color: #fff1d4;
+  font-size: 0.9rem;
+}
+
+.map-neighborhood-status .button {
+  min-height: 34px;
+  padding: 7px 10px;
+  white-space: nowrap;
 }
 
 .map-route-status {
@@ -598,8 +739,17 @@
 }
 
 @media (max-width: 720px) {
-  .immersive-map .map-hud-intro {
+  .immersive-map .map-hud-intro,
+  .map-neighborhood-count {
     display: none;
+  }
+
+  .map-neighborhood-status {
+    max-width: calc(100% - 32px);
+  }
+
+  .map-neighborhood-status > span:first-child {
+    min-width: 0;
   }
 
   .immersive-map .explorer-heading {
@@ -639,5 +789,9 @@
   .immersive-map * {
     scroll-behavior: auto;
     transition-duration: 0.01ms !important;
+  }
+
+  .cluster-system-marker {
+    animation: none;
   }
 }

@@ -72,6 +72,7 @@ function createGpuDevice(
     readonly onDestroy?: () => void;
     readonly onBuffer?: (descriptor: unknown) => void;
     readonly onBufferDestroy?: (descriptor: unknown) => void;
+    readonly onRenderPipeline?: (descriptor: unknown) => void;
   } = {},
 ): WebGpuDevice {
   const neverLost: Promise<WebGpuDeviceLoss> = new Promise(() => undefined);
@@ -87,7 +88,10 @@ function createGpuDevice(
     createBindGroupLayout: () => ({}),
     createPipelineLayout: () => ({}),
     createBindGroup: () => ({}),
-    createRenderPipeline: () => ({}),
+    createRenderPipeline: (descriptor: unknown) => {
+      options.onRenderPipeline?.(descriptor);
+      return {};
+    },
     createComputePipeline: () => ({}),
     createBuffer: (descriptor: unknown) => {
       options.onBuffer?.(descriptor);
@@ -295,6 +299,7 @@ function scaleScene() {
   return Object.freeze({
     preparation: prepareWebGpuScale(contract, view()),
     overlay,
+    focusFog: undefined,
   });
 }
 
@@ -308,6 +313,37 @@ describe("bounded WebGPU compute renderer seam", () => {
     expect(WEBGPU_SCALE_SHADER).toContain("@group(1) @binding(1) var<storage, read> renderPoints");
     expect(WEBGPU_SCALE_SHADER).toContain("atomicCompareExchangeWeak(&drawArgs[0]");
     expect(WEBGPU_SCALE_SHADER).toContain("current >= params.visibleCapacity");
+    expect(WEBGPU_SCALE_SHADER).toContain("renderParams.focusStrength");
+  });
+
+  test("enables alpha blending for fogged generated points and CPU overlays", async () => {
+    const pipelines: unknown[] = [];
+    const result = await createWebGpuScaleRenderer({
+      gpu: gpu(
+        adapter(
+          createGpuDevice({
+            onRenderPipeline: (descriptor) => pipelines.push(descriptor),
+          }),
+        ),
+      ),
+      canvas: canvas(),
+      requirements: undefined,
+      isSecureContext: true,
+    });
+
+    expect(result.ok).toBe(true);
+    const blended = pipelines.filter((descriptor) => {
+      const pipeline = descriptor as {
+        readonly fragment?: {
+          readonly targets?: readonly { readonly blend?: unknown }[];
+        };
+      };
+      return pipeline.fragment?.targets?.[0]?.blend !== undefined;
+    });
+    expect(blended).toHaveLength(3);
+    if (result.ok) {
+      result.renderer.destroy();
+    }
   });
 
   test("reports secure-context, format, and shader diagnostics before showing the 3D view", async () => {
@@ -868,6 +904,7 @@ describe("bounded WebGPU compute renderer seam", () => {
     const scene = Object.freeze({
       preparation: prepareWebGpuScale(contract, view(), 4),
       overlay,
+      focusFog: undefined,
     });
     result.renderer.renderScaleNow(scene, createCameraState(undefined));
 
@@ -947,6 +984,7 @@ describe("bounded WebGPU compute renderer seam", () => {
         4,
       ),
       overlay,
+      focusFog: undefined,
     });
     result.renderer.renderScaleNow(scene, createCameraState(undefined));
     expect(result.renderer.lastFrame()).toMatchObject({

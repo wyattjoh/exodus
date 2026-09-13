@@ -51,6 +51,7 @@ export type SystemExplorerViewProps = {
   readonly journey: SystemExplorerJourney | undefined;
   readonly journeySample: JourneySample | undefined;
   readonly selectedGateIds: readonly StableId[];
+  readonly selectedOrbitalAnchorIds: readonly StableId[];
   readonly onClose: () => void;
 };
 
@@ -158,6 +159,7 @@ export function SystemExplorerView({
   journey,
   journeySample,
   selectedGateIds,
+  selectedOrbitalAnchorIds,
   onClose,
 }: SystemExplorerViewProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -195,6 +197,7 @@ export function SystemExplorerView({
         coordinateTime,
         journey,
         selectedGateIds,
+        selectedOrbitalAnchorIds,
         orbitSampleCount: undefined,
         timelineEventIndex: selectedEventIndex,
         journeySample,
@@ -207,6 +210,7 @@ export function SystemExplorerView({
       scenario,
       selectedEventIndex,
       selectedGateIds,
+      selectedOrbitalAnchorIds,
       systemId,
     ],
   );

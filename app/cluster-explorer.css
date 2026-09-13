@@ -91,6 +91,40 @@
   cursor: grabbing;
 }
 
+.cluster-context-menu {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  min-width: 180px;
+  padding: 5px;
+  border: 1px solid rgba(255, 205, 137, 0.4);
+  border-radius: 9px;
+  background: rgba(16, 10, 10, 0.97);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.5);
+}
+
+.cluster-context-menu button {
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.68rem;
+  text-align: left;
+}
+
+.cluster-context-menu button:hover,
+.cluster-context-menu button:focus-visible {
+  background: rgba(255, 190, 100, 0.14);
+  color: var(--amber);
+  outline: none;
+}
+
+.cluster-context-menu button:disabled {
+  color: var(--faint);
+}
+
 .canvas-overlay {
   position: absolute;
   inset: 50% auto auto 50%;
@@ -103,6 +137,11 @@
   font-family: "DM Mono", ui-monospace, monospace;
   font-size: 0.68rem;
   white-space: nowrap;
+}
+
+.focus-transition-label {
+  border-color: rgba(255, 205, 137, 0.48);
+  color: var(--amber);
 }
 
 .camera-help {

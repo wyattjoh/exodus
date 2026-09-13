@@ -6,6 +6,8 @@ import {
   connectionsForExplorerEntity,
   createCameraState,
   createExplorerSelection,
+  explorerFocusConnectionOpacity,
+  explorerFocusPointOpacity,
   focusCameraOnPoint,
   normalizeExplorerSelection,
   orbitCamera,
@@ -31,7 +33,7 @@ function requireScenario(input: unknown) {
 }
 
 describe("Cluster explorer scene and selection seam", () => {
-  test("normalizes Systems, Gates, and paired Gate Connections for stable search", () => {
+  test("normalizes Systems, stars, Gates, and paired Gate Connections for stable search", () => {
     const scene = buildClusterExplorerScene(
       requireScenario(multiLegJourneyScenario),
       provenanceKinds,
@@ -42,10 +44,12 @@ describe("Cluster explorer scene and selection seam", () => {
       "CEN-1002",
       "CEN-1003",
     ]);
+    expect(scene.stars).toHaveLength(3);
     expect(scene.gates).toHaveLength(4);
     expect(scene.connections).toHaveLength(2);
     expect(searchClusterExplorer(scene, "CEN-1002").map((point) => point.id)).toEqual([
       "system:aurora",
+      "anchor:aurora-star",
       "gate:aurora-entry",
       "gate:aurora-exit",
     ]);
@@ -54,6 +58,17 @@ describe("Cluster explorer scene and selection seam", () => {
         .map((connection) => connection.id)
         .sort(),
     ).toEqual(["connection:aurora-exit-helios", "connection:terra-aurora-entry"]);
+    expect(
+      connectionsForExplorerEntity(scene, "anchor:aurora-star")
+        .map((connection) => connection.id)
+        .sort(),
+    ).toEqual(["connection:aurora-exit-helios", "connection:terra-aurora-entry"]);
+    expect(scene.stars.find((star) => star.id === "anchor:aurora-star")).toMatchObject({
+      id: "anchor:aurora-star",
+      entityKind: "star",
+      systemId: "system:aurora",
+      orbitalAnchorId: "anchor:aurora-star",
+    });
     expect(scene.connections[0]?.name).toContain("Link");
   });
 
@@ -67,11 +82,13 @@ describe("Cluster explorer scene and selection seam", () => {
     const scene = buildClusterExplorerScene(generated.scenario, ["generated"]);
 
     expect(scene.systems).toHaveLength(8);
+    expect(scene.stars).toHaveLength(8);
     expect(scene.systems.every((system) => system.provenance.kinds.includes("generated"))).toBe(
       true,
     );
     expect(buildClusterExplorerScene(generated.scenario, ["novel"])).toMatchObject({
       systems: [],
+      stars: [],
       gates: [],
       connections: [],
     });
@@ -95,6 +112,24 @@ describe("Cluster explorer scene and selection seam", () => {
       departureGateId: "gate:terra",
       destinationGateId: "gate:helios",
     });
+  });
+
+  test("fades unrelated points and links while retaining the focused Gate relationship", () => {
+    const scene = buildClusterExplorerScene(
+      requireScenario(multiLegJourneyScenario),
+      provenanceKinds,
+    );
+
+    expect(explorerFocusPointOpacity(scene, "gate:terra", "gate:terra", 1)).toBe(1);
+    expect(explorerFocusPointOpacity(scene, "gate:terra", "gate:aurora-entry", 1)).toBe(1);
+    expect(explorerFocusPointOpacity(scene, "gate:terra", "system:helios", 1)).toBeLessThan(0.5);
+    expect(
+      explorerFocusConnectionOpacity(scene, "gate:terra", "connection:terra-aurora-entry", 1),
+    ).toBe(0.9);
+    expect(
+      explorerFocusConnectionOpacity(scene, "gate:terra", "connection:aurora-exit-helios", 1),
+    ).toBeLessThan(0.5);
+    expect(explorerFocusPointOpacity(scene, "gate:terra", "system:helios", 0)).toBe(1);
   });
 
   test("classifies cumulative drag, normal click, and pointer cancellation deterministically", () => {

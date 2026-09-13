@@ -133,6 +133,7 @@ describe("AU-scale System explorer projection seam", () => {
       coordinateTime: seconds(0),
       journey: undefined,
       selectedGateIds: ["gate:aurora-entry", "gate:aurora-exit"],
+      selectedOrbitalAnchorIds: undefined,
       orbitSampleCount: 8,
       timelineEventIndex: undefined,
     });
@@ -170,10 +171,26 @@ describe("AU-scale System explorer projection seam", () => {
       coordinateTime: seconds(0),
       journey: undefined,
       selectedGateIds: undefined,
+      selectedOrbitalAnchorIds: undefined,
       orbitSampleCount: 8,
       timelineEventIndex: undefined,
     });
     expect(emptyRouteScene.entities).toEqual([]);
+
+    const selectedStarScene = buildSystemExplorerScene({
+      model,
+      scenario: nested,
+      systemId: "system:aurora",
+      coordinateTime: seconds(0),
+      journey: undefined,
+      selectedGateIds: undefined,
+      selectedOrbitalAnchorIds: ["anchor:aurora-star"],
+      orbitSampleCount: 8,
+      timelineEventIndex: undefined,
+    });
+    expect(selectedStarScene.entities.map((entity) => entity.id)).toEqual(["anchor:aurora-star"]);
+    expect(selectedStarScene.orbitalAnchors[0]?.selected).toBe(true);
+
     expect(renderedEntry?.worldline.position).toEqual(entry?.position);
     expect(renderedEntry?.worldline.velocity).toEqual(entry?.velocity);
 
@@ -194,6 +211,7 @@ describe("AU-scale System explorer projection seam", () => {
       coordinateTime: transfer.startCoordinateTime,
       journey: journey.timeline,
       selectedGateIds: undefined,
+      selectedOrbitalAnchorIds: undefined,
       orbitSampleCount: undefined,
       timelineEventIndex: undefined,
     });
@@ -301,6 +319,7 @@ describe("AU-scale System explorer projection seam", () => {
       coordinateTime: sample.state.coordinateTime,
       journey: result.timeline,
       selectedGateIds: undefined,
+      selectedOrbitalAnchorIds: undefined,
       orbitSampleCount: undefined,
       timelineEventIndex: flipIndex,
       journeySample: sample.state,
@@ -359,6 +378,7 @@ describe("AU-scale System explorer projection seam", () => {
       coordinateTime: flip.coordinateTime,
       journey: duplicateTransferTimeline,
       selectedGateIds: undefined,
+      selectedOrbitalAnchorIds: undefined,
       orbitSampleCount: undefined,
       timelineEventIndex: undefined,
     });

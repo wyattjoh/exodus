@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent,
   type WheelEvent,
 } from "react";
@@ -26,11 +27,14 @@ import {
   connectionsForExplorerEntity,
   createCameraState,
   createExplorerViewProjectionMatrix,
+  explorerFocusConnectionOpacity,
+  explorerFocusPointOpacity,
   findExplorerEntity,
   focusCameraOnPoint,
   orbitCamera,
   panCamera,
   pickExplorerEntity,
+  projectExplorerPoint,
   searchClusterExplorer,
   selectExplorerEntity,
   selectExplorerGate,
@@ -118,6 +122,18 @@ const DESTINATION_COLOR = Object.freeze([1, 0.3, 0.16, 1]) as readonly [
 ];
 const SHIP_COLOR = Object.freeze([1, 0.92, 0.62, 1]) as readonly [number, number, number, number];
 const CONNECTION_ALPHA = 0.42;
+const FOCUS_TRANSITION_MILLISECONDS = 520;
+
+type ClusterContextMenu = {
+  readonly entityId: StableId;
+  readonly x: number;
+  readonly y: number;
+};
+
+type SystemFocus = {
+  readonly entityId: StableId;
+  readonly systemId: StableId;
+};
 
 type StartupState =
   | { readonly state: "starting" }
@@ -154,10 +170,24 @@ function connectionColor(kind: ProvenanceKind): readonly [number, number, number
   ];
 }
 
+function colorWithOpacity(
+  value: readonly [number, number, number, number],
+  opacity: number,
+): readonly [number, number, number, number] {
+  return Object.freeze([value[0], value[1], value[2], value[3] * opacity]) as readonly [
+    number,
+    number,
+    number,
+    number,
+  ];
+}
+
 function renderScene(
   scene: ClusterExplorerScene,
   selection: ExplorerSelection,
   journeySample: JourneySample | undefined,
+  focusEntityId: StableId | undefined,
+  focusProgress: number,
 ): WebGpuRenderScene {
   const gatePositions =
     journeySample === undefined
@@ -190,7 +220,12 @@ function renderScene(
       ...scene.entities.map((point) =>
         Object.freeze({
           position: gatePositions?.get(point.id) ?? point.position,
-          color: pointColor(point, selection),
+          color: colorWithOpacity(
+            pointColor(point, selection),
+            focusEntityId === undefined
+              ? 1
+              : explorerFocusPointOpacity(scene, focusEntityId, point.id, focusProgress),
+          ),
         }),
       ),
       ...shipPoint,
@@ -202,7 +237,12 @@ function renderScene(
         return Object.freeze({
           from,
           to,
-          color: connectionColor(connection.provenance.primaryKind),
+          color: colorWithOpacity(
+            connectionColor(connection.provenance.primaryKind),
+            focusEntityId === undefined
+              ? 1
+              : explorerFocusConnectionOpacity(scene, focusEntityId, connection.id, focusProgress),
+          ),
         });
       }),
     ),
@@ -214,8 +254,10 @@ function renderScaleScene(
   selection: ExplorerSelection,
   journeySample: JourneySample | undefined,
   scenario: CompiledScenario,
-  camera: CameraState,
+  cameraState: CameraState,
   canvas: HTMLCanvasElement,
+  focusEntityId: StableId | undefined,
+  focusProgress: number,
 ): WebGpuScaleRenderScene {
   const seed = scenario.seed?.value ?? scenario.seed?.text ?? scenario.id;
   const requestedGeneratorVersion =
@@ -235,16 +277,26 @@ function renderScaleScene(
   });
   const viewport = viewportFor(canvas);
   const preparation = prepareWebGpuScale(contract, {
-    viewProjectionMatrix: Array.from(createExplorerViewProjectionMatrix(camera, viewport)),
+    viewProjectionMatrix: Array.from(createExplorerViewProjectionMatrix(cameraState, viewport)),
     viewportWidth: viewport.width,
     viewportHeight: viewport.height,
-    cameraDistance: camera.distance,
-    far: camera.far ?? 100,
+    cameraDistance: cameraState.distance,
+    far: cameraState.far ?? 100,
     worldRadiusMeters: contract.regionRadiusMeters,
   });
+  const focusPoint = findExplorerEntity(scene, focusEntityId);
   return Object.freeze({
     preparation,
-    overlay: renderScene(scene, selection, journeySample),
+    overlay: renderScene(scene, selection, journeySample, focusEntityId, focusProgress),
+    focusFog:
+      focusPoint === undefined
+        ? undefined
+        : Object.freeze({
+            center: focusPoint.position,
+            strength: Math.max(0, Math.min(1, focusProgress)),
+            near: 0.08,
+            far: 0.9,
+          }),
   });
 }
 
@@ -327,6 +379,10 @@ export function WebGpuClusterExplorer({
   const [renderWarning, setRenderWarning] = useState("");
   const [query, setQuery] = useState("");
   const [cameraRevision, setCameraRevision] = useState(0);
+  const [contextMenu, setContextMenu] = useState<ClusterContextMenu | undefined>(undefined);
+  const [focusEntityId, setFocusEntityId] = useState<StableId | undefined>(undefined);
+  const [focusProgress, setFocusProgress] = useState(0);
+  const [systemFocus, setSystemFocus] = useState<SystemFocus | undefined>(undefined);
   const initiallyFocusedScenario = useRef<CompiledScenario | undefined>(undefined);
 
   const scene = useMemo(
@@ -340,12 +396,23 @@ export function WebGpuClusterExplorer({
   const inspected = selectedPoint(scene, selection);
   const inspectedConnections =
     inspected === undefined ? [] : connectionsForExplorerEntity(scene, inspected.id);
-  const inspectedSystemId = inspected?.systemId;
   const selectedGateIds = [
     selection.departureGateId,
     selection.destinationGateId,
     inspected?.entityKind === "gate" ? inspected.id : undefined,
   ].filter((gateId): gateId is StableId => gateId !== undefined);
+  const selectedOrbitalAnchorIds =
+    systemFocus === undefined
+      ? []
+      : scenario.index.orbitalAnchors.get(systemFocus.entityId)?.kind === "star"
+        ? [systemFocus.entityId]
+        : scenario.index.systems.has(systemFocus.entityId)
+          ? scenario.orbitalAnchors
+              .filter(
+                (anchor) => anchor.systemId === systemFocus.systemId && anchor.kind === "star",
+              )
+              .map((anchor) => anchor.id)
+          : [];
   const generatedSystemCount = scenario.systems.filter(
     (system) => system.provenance.kind === "generated",
   ).length;
@@ -365,9 +432,10 @@ export function WebGpuClusterExplorer({
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (canvas === null) {
+    if (canvas === null || systemFocus !== undefined) {
       return undefined;
     }
+    setStartup({ state: "starting" });
     let active = true;
     let lost = false;
     const boundary: WebGpuStartupBoundary = {
@@ -418,7 +486,7 @@ export function WebGpuClusterExplorer({
       rendererRef.current?.destroy();
       rendererRef.current = undefined;
     };
-  }, []);
+  }, [systemFocus]);
 
   useEffect(() => {
     const renderer = rendererRef.current;
@@ -427,10 +495,19 @@ export function WebGpuClusterExplorer({
       return;
     }
     renderer.setScaleScene(
-      renderScaleScene(scene, selection, journeySample, scenario, cameraRef.current, canvas),
+      renderScaleScene(
+        scene,
+        selection,
+        journeySample,
+        scenario,
+        cameraRef.current,
+        canvas,
+        focusEntityId,
+        focusProgress,
+      ),
       cameraRef.current,
     );
-  }, [journeySample, scene, selection, scenario, cameraRevision]);
+  }, [journeySample, scene, selection, scenario, cameraRevision, focusEntityId, focusProgress]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -447,29 +524,119 @@ export function WebGpuClusterExplorer({
       const viewport = viewportFor(canvas);
       renderer.resize(viewport.width, viewport.height, globalThis.devicePixelRatio || 1);
       renderer.setScaleScene(
-        renderScaleScene(scene, selection, journeySample, scenario, cameraRef.current, canvas),
+        renderScaleScene(
+          scene,
+          selection,
+          journeySample,
+          scenario,
+          cameraRef.current,
+          canvas,
+          focusEntityId,
+          focusProgress,
+        ),
         cameraRef.current,
       );
     });
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [journeySample, scene, selection, scenario, startup.state]);
+  }, [journeySample, scene, selection, scenario, startup.state, focusEntityId, focusProgress]);
 
-  const focus = (point: ExplorerPoint): void => {
-    cameraRef.current = focusCameraOnPoint(cameraRef.current, point.position);
+  useEffect(() => {
+    if (contextMenu === undefined) {
+      return undefined;
+    }
+    const close = (): void => setContextMenu(undefined);
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (focusEntityId === undefined || model === undefined) {
+      return undefined;
+    }
+    const point = findExplorerEntity(scene, focusEntityId);
+    if (point === undefined) {
+      setFocusEntityId(undefined);
+      setFocusProgress(0);
+      return undefined;
+    }
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const duration = reduceMotion ? 0 : FOCUS_TRANSITION_MILLISECONDS;
+    const startedAt = performance.now();
+    let animationFrame = 0;
+    const advance = (now: number): void => {
+      const progress = duration === 0 ? 1 : Math.min(1, (now - startedAt) / duration);
+      setFocusProgress(progress);
+      if (progress < 1) {
+        animationFrame = requestAnimationFrame(advance);
+        return;
+      }
+      setSystemFocus(Object.freeze({ entityId: point.id, systemId: point.systemId }));
+    };
+    animationFrame = requestAnimationFrame(advance);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [focusEntityId, model, scene]);
+
+  const select = (point: ExplorerPoint): void => {
+    setContextMenu(undefined);
     onSelectionChange(selectExplorerEntity(selection, point.id));
-    setCameraRevision((value) => value + 1);
   };
 
-  const pickAt = (canvas: HTMLCanvasElement, x: number, y: number): void => {
+  const pickAt = (canvas: HTMLCanvasElement, x: number, y: number): ExplorerPoint | undefined => {
     const viewport = viewportFor(canvas);
     const point = pickExplorerEntity(scene, cameraRef.current, viewport, x, y);
     if (point !== undefined) {
-      focus(point);
+      select(point);
     }
+    return point;
+  };
+
+  const openContextMenu = (point: ExplorerPoint, event: ReactMouseEvent<HTMLElement>): void => {
+    event.preventDefault();
+    if (selection.selectedEntityId !== point.id) {
+      setContextMenu(undefined);
+      return;
+    }
+    setContextMenu(Object.freeze({ entityId: point.id, x: event.clientX, y: event.clientY }));
+  };
+
+  const handleContextMenu = (event: ReactMouseEvent<HTMLCanvasElement>): void => {
+    event.preventDefault();
+    const point = findExplorerEntity(scene, selection.selectedEntityId);
+    if (point === undefined) {
+      setContextMenu(undefined);
+      return;
+    }
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const projected = projectExplorerPoint(
+      point.position,
+      cameraRef.current,
+      viewportFor(event.currentTarget),
+    );
+    const pointerX = event.clientX - bounds.left;
+    const pointerY = event.clientY - bounds.top;
+    if (!projected.visible || Math.hypot(projected.x - pointerX, projected.y - pointerY) > 24) {
+      setContextMenu(undefined);
+      return;
+    }
+    setContextMenu(Object.freeze({ entityId: point.id, x: event.clientX, y: event.clientY }));
+  };
+
+  const zoomInto = (point: ExplorerPoint): void => {
+    if (model === undefined) {
+      return;
+    }
+    setContextMenu(undefined);
+    cameraRef.current = focusCameraOnPoint(cameraRef.current, point.position);
+    setFocusProgress(0);
+    setFocusEntityId(point.id);
+    setCameraRevision((value) => value + 1);
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLCanvasElement>): void => {
+    if (event.button !== 0) {
+      return;
+    }
     event.currentTarget.setPointerCapture(event.pointerId);
     pointerRef.current = beginExplorerPointerGesture(
       event.pointerId,
@@ -546,7 +713,7 @@ export function WebGpuClusterExplorer({
       event.preventDefault();
       const point = scene.entities[nextIndex];
       if (point !== undefined) {
-        focus(point);
+        select(point);
       }
       return;
     }
@@ -596,6 +763,30 @@ export function WebGpuClusterExplorer({
     </div>
   );
 
+  if (systemFocus !== undefined && model !== undefined) {
+    return (
+      <SystemExplorerView
+        model={model}
+        scenario={scenario}
+        systemId={systemFocus.systemId}
+        journey={plannedJourney}
+        journeySample={journeySample}
+        selectedGateIds={selectedGateIds}
+        selectedOrbitalAnchorIds={selectedOrbitalAnchorIds}
+        onClose={() => {
+          setSystemFocus(undefined);
+          setFocusEntityId(undefined);
+          setFocusProgress(0);
+          cameraRef.current = createCameraState(undefined);
+          setCameraRevision((value) => value + 1);
+        }}
+      />
+    );
+  }
+
+  const contextPoint =
+    contextMenu === undefined ? undefined : findExplorerEntity(scene, contextMenu.entityId);
+
   return (
     <section className="explorer-card immersive-map" aria-labelledby="cluster-explorer-heading">
       <header className="section-heading-row explorer-heading map-hud map-hud-header">
@@ -614,8 +805,9 @@ export function WebGpuClusterExplorer({
         </div>
       </header>
       <p className="control-help explorer-intro map-hud map-hud-intro">
-        Systems are shown at Cluster scale. Gate Connections identify paired Gates; when Journey
-        playback is active, Gate worldlines and the current ship sample share its coordinate time.
+        Systems and stars are shown at Cluster scale. Select an entity, then right-click it to zoom
+        into its AU-scale System. Gate Connections identify paired Gates; Journey playback shares
+        the same coordinate time.
       </p>
       <p className="map-route-status" aria-label="Active route endpoints">
         <strong>Departure</strong>{" "}
@@ -672,15 +864,38 @@ export function WebGpuClusterExplorer({
                 width={960}
                 height={640}
                 tabIndex={0}
-                aria-label="Three-dimensional Centauri Cluster. Use arrow keys to navigate entities, drag to orbit, and scroll to zoom."
+                aria-label="Three-dimensional Centauri Cluster. Select an entity, then right-click it for zoom actions. Use arrow keys to navigate entities, drag to orbit, and scroll to zoom."
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerCancel={handlePointerCancel}
                 onWheel={handleWheel}
                 onKeyDown={handleKeyDown}
+                onContextMenu={handleContextMenu}
               />
-              {startup.state === "starting" ? (
+              {contextPoint !== undefined && contextMenu !== undefined ? (
+                <div
+                  className="cluster-context-menu"
+                  role="menu"
+                  aria-label={`${contextPoint.name} actions`}
+                  style={{ left: contextMenu.x, top: contextMenu.y }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => zoomInto(contextPoint)}
+                    disabled={model === undefined || focusEntityId !== undefined}
+                  >
+                    Zoom in to System
+                  </button>
+                </div>
+              ) : null}
+              {focusEntityId !== undefined ? (
+                <output className="canvas-overlay focus-transition-label" aria-live="polite">
+                  Entering AU-scale System…
+                </output>
+              ) : startup.state === "starting" ? (
                 <output className="canvas-overlay" aria-live="polite">
                   Connecting to WebGPU…
                 </output>
@@ -709,8 +924,8 @@ export function WebGpuClusterExplorer({
               ) : null}
             </div>
             <p className="camera-help">
-              Drag to orbit · Shift-drag to pan · scroll to zoom · arrow keys to navigate · Enter to
-              inspect
+              Click to select · right-click the selected entity to zoom in · drag to orbit ·
+              Shift-drag to pan · scroll to zoom · arrow keys to navigate
             </p>
           </div>
           <aside
@@ -736,7 +951,7 @@ export function WebGpuClusterExplorer({
                 <span className="count-badge">{searchResults.length}</span>
               </div>
               {searchResults.length === 0 ? (
-                <p className="muted">No visible System or Gate matches.</p>
+                <p className="muted">No visible System, star, or Gate matches.</p>
               ) : (
                 <div className="explorer-result-list">
                   {searchResults.map((point) => (
@@ -744,7 +959,8 @@ export function WebGpuClusterExplorer({
                       className={`explorer-result ${selection.selectedEntityId === point.id ? "is-selected" : ""}`}
                       type="button"
                       key={point.id}
-                      onClick={() => focus(point)}
+                      onClick={() => select(point)}
+                      onContextMenu={(event) => openContextMenu(point, event)}
                     >
                       <span>{labelForPoint(point)}</span>
                       <small>
@@ -802,7 +1018,9 @@ export function WebGpuClusterExplorer({
                 ) : null}
               </div>
               {inspected === undefined ? (
-                <p className="muted">Select a System or Gate in the view to inspect its context.</p>
+                <p className="muted">
+                  Select a System, star, or Gate in the view to inspect its context.
+                </p>
               ) : (
                 <>
                   <h3>{inspected.name}</h3>
@@ -815,8 +1033,12 @@ export function WebGpuClusterExplorer({
                     ))}
                   </div>
                   <p className="inspector-meta">
-                    {inspected.entityKind === "system" ? "System" : "Gate of Heaven"} · stable id{" "}
-                    {inspected.id}
+                    {inspected.entityKind === "system"
+                      ? "System"
+                      : inspected.entityKind === "star"
+                        ? "Star / Orbital Anchor"
+                        : "Gate of Heaven"}{" "}
+                    · stable id {inspected.id}
                   </p>
                   {roleButtons(inspected)}
                   {inspectedConnections.length > 0 ? (
@@ -856,25 +1078,6 @@ export function WebGpuClusterExplorer({
           </aside>
         </div>
       )}
-      {model !== undefined && inspectedSystemId !== undefined ? (
-        <SystemExplorerView
-          model={model}
-          scenario={scenario}
-          systemId={inspectedSystemId}
-          journey={plannedJourney}
-          journeySample={journeySample}
-          selectedGateIds={selectedGateIds}
-          onClose={() =>
-            onSelectionChange(
-              Object.freeze({
-                ...selection,
-                focusedEntityId: undefined,
-                selectedEntityId: undefined,
-              }),
-            )
-          }
-        />
-      ) : null}
       {generation.state === "failed" && generation.error !== undefined ? (
         <output className="notice notice-warning" aria-live="polite">
           {generation.error}

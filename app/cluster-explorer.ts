@@ -1,6 +1,7 @@
 import type {
   CompiledGate,
   CompiledGateConnection,
+  CompiledOrbitalAnchor,
   CompiledScenario,
   CompiledSystem,
   Provenance,
@@ -17,7 +18,7 @@ export type ExplorerVector3 = readonly [number, number, number];
 /**
  * The entity categories that can be rendered or inspected in the Cluster view.
  */
-export type ExplorerEntityKind = "system" | "gate";
+export type ExplorerEntityKind = "system" | "star" | "gate";
 
 /**
  * The role a selected Gate can fill in the shared Journey-planning selection.
@@ -36,7 +37,7 @@ export type ExplorerProvenanceSummary = {
 };
 
 /**
- * A searchable System or Gate prepared for Cluster rendering.
+ * A searchable System, star Orbital Anchor, or Gate prepared for Cluster rendering.
  */
 export type ExplorerPoint = {
   readonly id: StableId;
@@ -74,6 +75,7 @@ export type ClusterExplorerScene = {
   readonly coordinateTime: number;
   readonly extentMeters: number;
   readonly systems: readonly ExplorerPoint[];
+  readonly stars: readonly ExplorerPoint[];
   readonly gates: readonly ExplorerPoint[];
   readonly entities: readonly ExplorerPoint[];
   readonly connections: readonly ExplorerConnection[];
@@ -253,6 +255,21 @@ function pointFromSystem(system: CompiledSystem, extentMeters: number): Explorer
   });
 }
 
+function pointFromStar(star: CompiledOrbitalAnchor, extentMeters: number): ExplorerPoint {
+  const positionMeters = finiteVector(star.positionAtEpoch);
+  return Object.freeze({
+    id: star.id,
+    entityKind: "star" as const,
+    name: star.name,
+    designation: star.designation,
+    systemId: star.systemId,
+    orbitalAnchorId: star.id,
+    position: normalizedPosition(positionMeters, extentMeters),
+    positionMeters,
+    provenance: provenanceSummary(star),
+  });
+}
+
 function pointFromGate(gate: CompiledGate, extentMeters: number): ExplorerPoint {
   const positionMeters = finiteVector(gate.positionAtEpoch);
   return Object.freeze({
@@ -310,7 +327,7 @@ function connectionVisible(
  *
  * @param scenario - The canonical or currently materialized Scenario to display.
  * @param allowedKinds - Provenance categories that remain visible.
- * @returns An immutable scene with Systems, Gates, and paired Gate Connections.
+ * @returns An immutable scene with Systems, stars, Gates, and paired Gate Connections.
  */
 export function buildClusterExplorerScene(
   scenario: CompiledScenario,
@@ -318,11 +335,18 @@ export function buildClusterExplorerScene(
 ): ClusterExplorerScene {
   const allPositions = [
     ...scenario.systems.map((system) => finiteVector(system.positionAtEpoch)),
+    ...scenario.orbitalAnchors
+      .filter((anchor) => anchor.kind === "star")
+      .map((star) => finiteVector(star.positionAtEpoch)),
     ...scenario.gates.map((gate) => finiteVector(gate.positionAtEpoch)),
   ];
   const extentMeters = Math.max(1, ...allPositions.map(magnitude));
   const systems = scenario.systems
     .map((system) => pointFromSystem(system, extentMeters))
+    .filter((point) => visible(point, allowedKinds));
+  const stars = scenario.orbitalAnchors
+    .filter((anchor) => anchor.kind === "star")
+    .map((star) => pointFromStar(star, extentMeters))
     .filter((point) => visible(point, allowedKinds));
   const gates = scenario.gates
     .map((gate) => pointFromGate(gate, extentMeters))
@@ -339,8 +363,9 @@ export function buildClusterExplorerScene(
     coordinateTime: scenario.epoch.coordinateTime.value,
     extentMeters,
     systems: Object.freeze(systems),
+    stars: Object.freeze(stars),
     gates: Object.freeze(gates),
-    entities: Object.freeze([...systems, ...gates]),
+    entities: Object.freeze([...systems, ...stars, ...gates]),
     connections: Object.freeze(connections),
   });
 }
@@ -360,7 +385,7 @@ function searchScore(point: ExplorerPoint, query: string): number | undefined {
 }
 
 /**
- * Searches visible Systems and Gates by stable name, designation, or identifier.
+ * Searches visible Systems, stars, and Gates by stable name, designation, or identifier.
  *
  * @param scene - The filtered Cluster scene to search.
  * @param query - User-entered name, designation, or stable identifier text.
@@ -406,7 +431,7 @@ export function searchClusterExplorer(
 export const searchExplorerEntities = searchClusterExplorer;
 
 /**
- * Finds a rendered System or Gate by its stable identifier.
+ * Finds a rendered System, star, or Gate by its stable identifier.
  *
  * @param scene - The Cluster scene to inspect.
  * @param entityId - Stable entity identifier.
@@ -423,10 +448,10 @@ export function findExplorerEntity(
 }
 
 /**
- * Lists Gate Connections associated with a System or Gate.
+ * Lists Gate Connections associated with a System, star, or Gate.
  *
  * @param scene - The Cluster scene to inspect.
- * @param entityId - Stable System or Gate identifier.
+ * @param entityId - Stable System, star, or Gate identifier.
  * @returns Connections that remain visible under the active Provenance filter.
  */
 export function connectionsForExplorerEntity(
@@ -437,14 +462,114 @@ export function connectionsForExplorerEntity(
   const gateIds =
     entity?.entityKind === "system"
       ? scene.gates.filter((gate) => gate.systemId === entity.systemId).map((gate) => gate.id)
-      : entity?.entityKind === "gate"
-        ? [entity.id]
-        : [];
+      : entity?.entityKind === "star"
+        ? scene.gates.filter((gate) => gate.systemId === entity.systemId).map((gate) => gate.id)
+        : entity?.entityKind === "gate"
+          ? [entity.id]
+          : [];
   return Object.freeze(
     scene.connections.filter(
       (connection) => gateIds.includes(connection.gateAId) || gateIds.includes(connection.gateBId),
     ),
   );
+}
+
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function smoothstep(lower: number, upper: number, value: number): number {
+  const normalized = clampUnit((value - lower) / (upper - lower));
+  return normalized * normalized * (3 - 2 * normalized);
+}
+
+function distance(left: ExplorerVector3, right: ExplorerVector3): number {
+  return Math.hypot(left[0] - right[0], left[1] - right[1], left[2] - right[2]);
+}
+
+function focusRelationshipIds(
+  scene: ClusterExplorerScene,
+  focused: ExplorerPoint,
+): ReadonlySet<StableId> {
+  const ids = new Set<StableId>([focused.id, focused.systemId]);
+  for (const entity of scene.entities) {
+    if (entity.systemId === focused.systemId) {
+      ids.add(entity.id);
+    }
+  }
+  for (const connection of connectionsForExplorerEntity(scene, focused.id)) {
+    ids.add(connection.gateAId);
+    ids.add(connection.gateBId);
+  }
+  return ids;
+}
+
+/**
+ * Calculates distance fog opacity for one Cluster entity during a focus transition.
+ *
+ * Entities in the selected System and endpoints on its visible Gate relationships retain context;
+ * unrelated entities fade increasingly with their normalized distance from the selected entity.
+ *
+ * @param scene - Filtered Cluster scene.
+ * @param focusedEntityId - Entity driving the focus transition.
+ * @param entityId - Entity whose opacity should be calculated.
+ * @param progress - Transition progress from zero to one.
+ * @returns An opacity multiplier between zero and one.
+ */
+export function explorerFocusPointOpacity(
+  scene: ClusterExplorerScene,
+  focusedEntityId: StableId,
+  entityId: StableId,
+  progress: number,
+): number {
+  const focused = findExplorerEntity(scene, focusedEntityId);
+  const entity = findExplorerEntity(scene, entityId);
+  if (focused === undefined || entity === undefined) {
+    return 1;
+  }
+  const transition = clampUnit(progress);
+  const related = focusRelationshipIds(scene, focused).has(entity.id);
+  const proximity = 1 - smoothstep(0.08, 0.9, distance(focused.position, entity.position));
+  const focusedOpacity = related ? 1 : 0.06 + proximity * 0.44;
+  return 1 + (focusedOpacity - 1) * transition;
+}
+
+/**
+ * Calculates distance fog opacity for one Gate Connection during a Cluster focus transition.
+ *
+ * @param scene - Filtered Cluster scene.
+ * @param focusedEntityId - Entity driving the focus transition.
+ * @param connectionId - Gate Connection whose opacity should be calculated.
+ * @param progress - Transition progress from zero to one.
+ * @returns An opacity multiplier between zero and one.
+ */
+export function explorerFocusConnectionOpacity(
+  scene: ClusterExplorerScene,
+  focusedEntityId: StableId,
+  connectionId: StableId,
+  progress: number,
+): number {
+  const focused = findExplorerEntity(scene, focusedEntityId);
+  const connection = scene.connections.find((value) => value.id === connectionId);
+  if (focused === undefined || connection === undefined) {
+    return 1;
+  }
+  const transition = clampUnit(progress);
+  const related = connectionsForExplorerEntity(scene, focused.id).some(
+    (value) => value.id === connection.id,
+  );
+  const proximity =
+    1 -
+    smoothstep(
+      0.08,
+      0.9,
+      Math.min(
+        distance(focused.position, connection.endpoints[0]),
+        distance(focused.position, connection.endpoints[1]),
+      ),
+    );
+  const focusedOpacity = related ? 0.9 : 0.04 + proximity * 0.32;
+  return 1 + (focusedOpacity - 1) * transition;
 }
 
 /**

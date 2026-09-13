@@ -453,6 +453,7 @@ export type BuildSystemExplorerSceneOptions = {
   readonly coordinateTime: Seconds | number;
   readonly journey: SystemExplorerJourney | undefined;
   readonly selectedGateIds: readonly StableId[] | undefined;
+  readonly selectedOrbitalAnchorIds: readonly StableId[] | undefined;
   readonly orbitSampleCount: number | undefined;
   readonly timelineEventIndex: number | undefined;
   readonly journeySample?: JourneySample | undefined;
@@ -1256,10 +1257,10 @@ function emptyScene(
  *
  * The projection calls `evaluateWorldlines` for the active epoch and for orbit samples. It never
  * solves an orbit, predicts a Gate, or recomputes transfer timing in UI code. Only Gates on the
- * supplied Journey (or explicitly selected Gates when no Journey exists) and their ancestor
+ * supplied Journey, explicitly selected Gates, selected Orbital Anchors, and their ancestor
  * Orbital Anchors are included, so unrelated generated scenery remains absent.
  *
- * @param options - Model, Scenario, selected System, epoch, Journey, and selected Gates.
+ * @param options - Model, Scenario, selected System, epoch, Journey, Gates, and Orbital Anchors.
  * @returns An immutable local scene with model states, orbit relationships, phase descriptions,
  * transfer geometry, and numerical diagnostics.
  */
@@ -1344,8 +1345,15 @@ export function buildSystemExplorerScene(
   }
 
   const selectedIds = new Set(options.selectedGateIds ?? []);
+  const selectedAnchorIds = new Set(options.selectedOrbitalAnchorIds ?? []);
   const gateIds = routeGateIds(options.scenario, journey, system.id, [...selectedIds]);
   const anchorIds = new Set<StableId>();
+  for (const anchorId of selectedAnchorIds) {
+    const anchor = options.scenario.index.orbitalAnchors.get(anchorId);
+    if (anchor?.systemId === system.id) {
+      addAncestors(options.scenario, anchor.id, anchorIds);
+    }
+  }
   for (const gateId of gateIds) {
     const gate = options.scenario.index.gates.get(gateId);
     if (gate !== undefined) {
@@ -1356,7 +1364,9 @@ export function buildSystemExplorerScene(
     .filter((anchor) => anchor.systemId === system.id && anchorIds.has(anchor.id))
     .flatMap((anchor) => {
       const state = worldlineForAnchor(worldlines.orbitalAnchors, anchor.id);
-      return state === undefined ? [] : [bodyForAnchor(anchor, state, transform, false)];
+      return state === undefined
+        ? []
+        : [bodyForAnchor(anchor, state, transform, selectedAnchorIds.has(anchor.id))];
     });
   const gates = options.scenario.gates
     .filter((gate) => gate.systemId === system.id && gateIds.includes(gate.id))

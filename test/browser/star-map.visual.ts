@@ -146,6 +146,37 @@ async function expectScrollableContentReachable(
   await expect(lastChild).toBeVisible();
 }
 
+test("a selected star enters its owning AU-scale System and only the Back button returns", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.locator(".canvas-overlay")).toHaveCount(0);
+
+  await page
+    .getByRole("searchbox", { name: "Search name or stable designation" })
+    .fill("Aurora Primary");
+  const star = page.locator(".explorer-result").filter({ hasText: "Aurora Primary" });
+  await star.click();
+  await expect(star).toHaveClass(/is-selected/);
+
+  await star.click({ button: "right" });
+  const zoom = page.getByRole("menuitem", { name: "Zoom in to System" });
+  await expect(zoom).toBeVisible();
+  await zoom.click();
+
+  await expect(page.getByRole("heading", { name: "Aurora System" })).toBeVisible();
+  await expect(page.locator(".immersive-map")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("heading", { name: "Aurora System" })).toBeVisible();
+  await page.locator(".system-canvas").focus();
+  await page.keyboard.press("Home");
+  await expect(page.getByRole("heading", { name: "Aurora System" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Back to Cluster" }).click();
+  await expect(page.locator(".immersive-map")).toBeVisible();
+  await expect(star).toHaveClass(/is-selected/);
+});
+
 test("the complete Journey calculator remains a non-overlapping MacBook HUD", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".immersive-map")).toBeVisible();

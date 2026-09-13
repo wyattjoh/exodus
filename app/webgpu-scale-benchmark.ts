@@ -125,7 +125,7 @@ function nextAnimationFrame(): Promise<number> {
 }
 
 function scaleScene(preparation: WebGpuScalePreparation) {
-  return Object.freeze({ preparation, overlay: EMPTY_OVERLAY });
+  return Object.freeze({ preparation, overlay: EMPTY_OVERLAY, focusFog: undefined });
 }
 
 function outputPoint(

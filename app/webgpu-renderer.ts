@@ -269,11 +269,22 @@ export type WebGpuScaleDevice = WebGpuDevice & {
 };
 
 /**
+ * Distance fog applied to generated Cluster points while entering a focused System.
+ */
+export type WebGpuScaleFocusFog = {
+  readonly center: ExplorerVector3;
+  readonly strength: number;
+  readonly near: number;
+  readonly far: number;
+};
+
+/**
  * A dense logical Cluster request submitted to the GPU compute pipeline.
  */
 export type WebGpuScaleRenderScene = {
   readonly preparation: WebGpuScalePreparation;
   readonly overlay: WebGpuRenderScene;
+  readonly focusFog: WebGpuScaleFocusFog | undefined;
 };
 
 /**
@@ -636,6 +647,10 @@ struct ScaleParams {
   candidateCount: u32,
   logicalStride: u32,
   visibleCapacity: u32,
+  focusCenter: vec3<f32>,
+  focusStrength: f32,
+  focusNear: f32,
+  focusFar: f32,
 };
 
 struct GeneratedPoint {
@@ -751,8 +766,12 @@ struct PointVertexOutput {
 fn pointVertex(@builtin(vertex_index) index: u32) -> PointVertexOutput {
   var output: PointVertexOutput;
   let point = renderPoints[index];
+  let focusDistance = distance(point.position.xyz, renderParams.focusCenter);
+  let focusRange = max(0.0001, renderParams.focusFar - renderParams.focusNear);
+  let proximity = 1.0 - smoothstep(0.0, 1.0, (focusDistance - renderParams.focusNear) / focusRange);
+  let fogOpacity = mix(1.0, 0.06 + proximity * 0.44, renderParams.focusStrength);
   output.position = renderParams.viewProjection * point.position;
-  output.color = vec4<f32>(0.55, 0.88, 0.77, 0.72);
+  output.color = vec4<f32>(0.55, 0.88, 0.77, 0.72 * fogOpacity);
   return output;
 }
 
@@ -2688,6 +2707,42 @@ export function validateWebGpuScaleOverlay(value: unknown): WebGpuScaleOverlaySn
   });
 }
 
+function validateWebGpuScaleFocusFog(value: unknown): WebGpuScaleFocusFog | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  preparationShape(value, ["center", "strength", "near", "far"], [], "scale scene.focusFog");
+  const center = preparationNumberArray(
+    preparationDataProperty(value, "center", "scale scene.focusFog"),
+    3,
+    "scale scene.focusFog.center",
+  ) as ExplorerVector3;
+  const strength = preparationFiniteNumber(
+    preparationDataProperty(value, "strength", "scale scene.focusFog"),
+    "scale scene.focusFog.strength",
+  );
+  const near = preparationFiniteNumber(
+    preparationDataProperty(value, "near", "scale scene.focusFog"),
+    "scale scene.focusFog.near",
+  );
+  const far = preparationFiniteNumber(
+    preparationDataProperty(value, "far", "scale scene.focusFog"),
+    "scale scene.focusFog.far",
+  );
+  if (strength < 0 || strength > 1) {
+    throw new RangeError("scale scene.focusFog.strength must be between zero and one.");
+  }
+  if (near < 0 || far <= near) {
+    throw new RangeError("scale scene.focusFog must have a non-negative near below far.");
+  }
+  return Object.freeze({
+    center: Object.freeze([...center]) as ExplorerVector3,
+    strength,
+    near,
+    far,
+  });
+}
+
 function overlayPointValues(points: readonly WebGpuRenderPoint[]): Float32Array {
   return floatsForPoints(points);
 }
@@ -2946,7 +3001,23 @@ function createScaleRenderer(
       fragment: {
         module: scaleShader,
         entryPoint: "pointFragment",
-        targets: [{ format }],
+        targets: [
+          {
+            format,
+            blend: {
+              color: {
+                srcFactor: "src-alpha",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
+              },
+              alpha: {
+                srcFactor: "one",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
+              },
+            },
+          },
+        ],
       },
       primitive: { topology: "point-list" },
     });
@@ -2980,7 +3051,27 @@ function createScaleRenderer(
           entryPoint: "vertexMain",
           buffers: [overlayVertexBufferLayout],
         },
-        fragment: { module: overlayShader, entryPoint: "fragmentMain", targets: [{ format }] },
+        fragment: {
+          module: overlayShader,
+          entryPoint: "fragmentMain",
+          targets: [
+            {
+              format,
+              blend: {
+                color: {
+                  srcFactor: "src-alpha",
+                  dstFactor: "one-minus-src-alpha",
+                  operation: "add",
+                },
+                alpha: {
+                  srcFactor: "one",
+                  dstFactor: "one-minus-src-alpha",
+                  operation: "add",
+                },
+              },
+            },
+          ],
+        },
         primitive: { topology },
       });
     overlayPointPipeline = createOverlayPipeline("point-list");
@@ -2991,7 +3082,10 @@ function createScaleRenderer(
     throw error;
   }
 
-  const writeParams = (preparation: WebGpuScalePreparation): void => {
+  const writeParams = (
+    preparation: WebGpuScalePreparation,
+    focusFog: WebGpuScaleFocusFog | undefined,
+  ): void => {
     const buffer = paramsBuffer;
     if (buffer === undefined) {
       throw new Error("GPU scale uniform buffer was not initialized.");
@@ -3021,6 +3115,12 @@ function createScaleRenderer(
     integers[45] = preparation.lod.candidateCount;
     integers[46] = preparation.lod.range.logicalStride;
     integers[47] = preparation.lod.visibleCapacity;
+    floats[48] = Math.fround(focusFog?.center[0] ?? 0);
+    floats[49] = Math.fround(focusFog?.center[1] ?? 0);
+    floats[50] = Math.fround(focusFog?.center[2] ?? 0);
+    floats[51] = Math.fround(focusFog?.strength ?? 0);
+    floats[52] = Math.fround(focusFog?.near ?? 0);
+    floats[53] = Math.fround(focusFog?.far ?? 1);
     device.queue.writeBuffer(buffer, 0, bytes);
   };
 
@@ -3303,6 +3403,9 @@ function createScaleRenderer(
       const overlay = validateWebGpuScaleOverlay(
         preparationDataProperty(scene, "overlay", "scale scene"),
       );
+      const focusFog = validateWebGpuScaleFocusFog(
+        preparationDataProperty(scene, "focusFog", "scale scene"),
+      );
       const transitionPeakBytes = overlayTransitionPeakBytes(
         overlay,
         overlayPointCapacityBytes,
@@ -3314,7 +3417,7 @@ function createScaleRenderer(
         );
       }
       ensureBuffers(preparation);
-      writeParams(preparation);
+      writeParams(preparation, focusFog);
       const indirect = indirectBuffer;
       const bindGroup = computeBindGroup;
       const renderGroup = renderBindGroup;
@@ -3471,7 +3574,7 @@ function createScaleRenderer(
         pendingTimestamp = timestampResources;
       }
       generatedPreparationKey = key;
-      currentScene = Object.freeze({ preparation, overlay: overlay.scene });
+      currentScene = Object.freeze({ preparation, overlay: overlay.scene, focusFog });
       currentCamera = camera;
       lastFrameReport = Object.freeze({
         candidateCount: preparation.lod.candidateCount,

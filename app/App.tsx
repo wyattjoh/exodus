@@ -945,6 +945,33 @@ export default function App(): JSX.Element {
 
   return (
     <div className="app-shell">
+      {storageError ? (
+        <div className="notice notice-error" role="alert">
+          {storageError}
+        </div>
+      ) : null}
+      {message ? (
+        <output className="notice" aria-live="polite">
+          {message}
+        </output>
+      ) : null}
+
+      <WebGpuClusterExplorer
+        scenario={activeScenario}
+        selection={selection}
+        onSelectionChange={setSelection}
+        selectedProvenance={selectedProvenance}
+        onProvenanceChange={toggleProvenance}
+        generation={{
+          state: generationState,
+          progress: generationProgress,
+          error: generationError,
+        }}
+        model={model}
+        plannedJourney={plannedJourney}
+        journeySample={playback?.sample}
+      />
+
       <header className="masthead">
         <div>
           <p className="eyebrow">EXODUS / CENTAURI CLUSTER</p>
@@ -967,247 +994,239 @@ export default function App(): JSX.Element {
         </div>
       </header>
 
-      {storageError ? (
-        <div className="notice notice-error" role="alert">
-          {storageError}
-        </div>
-      ) : null}
-      {message ? (
-        <output className="notice" aria-live="polite">
-          {message}
-        </output>
-      ) : null}
-
-      <div className="workspace">
-        <aside className="sidebar" aria-label="Journey controls">
-          <StorageControls
-            repository={repository}
-            scenario={scenario}
-            records={records}
-            onScenario={replaceScenario}
-            onRecords={setRecords}
-            onMessage={setMessage}
-          />
-
-          <form className="control-card planner-form" onSubmit={(event) => void plan(event)}>
-            <div className="section-heading-row">
-              <div>
-                <p className="eyebrow">Exact Gate workflow</p>
-                <h2>Plan a Journey</h2>
-              </div>
-              <span className="catalog-chip">T+0</span>
-            </div>
-
-            <fieldset className="control-group">
-              <legend>Gate endpoints</legend>
-              <label>
-                <span>Departure Gate</span>
-                <select
-                  value={selectedDeparture}
-                  onChange={(event) =>
-                    setSelection((previous) =>
-                      selectExplorerGate(previous, "departure", event.currentTarget.value),
-                    )
-                  }
-                >
-                  {departureOptions.map((gate) => (
-                    <option key={gate.id} value={gate.id}>
-                      {formatGateLabel(activeScenario, gate.id)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Destination Gate</span>
-                <select
-                  value={selectedDestination}
-                  onChange={(event) =>
-                    setSelection((previous) =>
-                      selectExplorerGate(previous, "destination", event.currentTarget.value),
-                    )
-                  }
-                >
-                  {destinationOptions.map((gate) => (
-                    <option key={gate.id} value={gate.id}>
-                      {formatGateLabel(activeScenario, gate.id)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </fieldset>
-
-            <fieldset className="control-group">
-              <legend>Ship and epoch</legend>
-              <label>
-                <span>Ship Profile</span>
-                <select
-                  value={selectedShip}
-                  onChange={(event) => setSelectedShip(event.currentTarget.value)}
-                >
-                  {scenario.shipProfiles.map((ship) => (
-                    <option key={ship.id} value={ship.id}>
-                      {shipLabel(scenario, ship.id)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p className="control-help">
-                Gate travel requires a ZPZ Generator. Cruise speed remains exactly 0.999c in the
-                Cluster Frame.
-              </p>
-              <label>
-                <span>Departure epoch ({activeScenario.epoch.label} days)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={departureDays}
-                  onChange={(event) =>
-                    setDepartureDays(Math.max(0, Number(event.currentTarget.value)))
-                  }
-                />
-              </label>
-            </fieldset>
-
-            <fieldset className="control-group">
-              <legend>Finite horizons</legend>
-              <label>
-                <span>Latest arrival horizon (days)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={latestArrivalDays}
-                  onChange={(event) =>
-                    setLatestArrivalDays(Math.max(0, Number(event.currentTarget.value)))
-                  }
-                />
-              </label>
-              <label>
-                <span>Strategic-wait horizon (days)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={strategicWaitDays}
-                  onChange={(event) =>
-                    setStrategicWaitDays(Math.max(0, Number(event.currentTarget.value)))
-                  }
-                />
-              </label>
-              <p className="control-help">
-                No wait is inserted outside this explicit query horizon.
-              </p>
-            </fieldset>
-
-            <ProvenanceFilter selected={selectedProvenance} onChange={toggleProvenance} />
-            <UncertaintyControls
-              controls={uncertaintyControls}
-              values={nominals}
-              onChange={(path, value) =>
-                setNominals((previous) => ({ ...previous, [path]: value }))
-              }
-              onApply={applyNominals}
-              disabled={uncertaintyControls.every(
-                (control) => (nominals[control.path] ?? control.nominal) === control.nominal,
-              )}
+      <div className="workspace" aria-label="Journey calculator overlays">
+        <details className="app-hud-drawer app-hud-controls" name="app-hud">
+          <summary>
+            <span>Journey setup</span>
+            <small>Gates, ship & horizons</small>
+          </summary>
+          <aside className="sidebar" aria-label="Journey controls">
+            <StorageControls
+              repository={repository}
+              scenario={scenario}
+              records={records}
+              onScenario={replaceScenario}
+              onRecords={setRecords}
+              onMessage={setMessage}
             />
 
-            <div className="planner-actions">
-              <button
-                className="button button-primary plan-button"
-                type="submit"
-                disabled={planningState === "running"}
-              >
-                {planningState === "running" ? "Planning…" : "Plan earliest arrival"}
-              </button>
-              {planningState === "running" ? (
-                <button className="button button-danger" type="button" onClick={cancelPlan}>
-                  Cancel
-                </button>
-              ) : null}
-            </div>
-            {planningState === "running" ? (
-              <div className="progress-block" aria-live="polite">
-                <div className="progress-label">
-                  <span>{progress?.stage ?? "queued"}</span>
-                  <span>{Math.round(progressPercent)}%</span>
-                </div>
-                <progress max="100" value={progressPercent} />
-                <small>Worker request {progress?.requestId ?? "starting"}</small>
-              </div>
-            ) : null}
-          </form>
-
-          {scenario.overrideLayers.length > 0 ? (
-            <section className="control-card" aria-labelledby="revert-heading">
+            <form className="control-card planner-form" onSubmit={(event) => void plan(event)}>
               <div className="section-heading-row">
-                <h2 id="revert-heading">Revert overrides</h2>
-                <span className="count-badge">{scenario.overrideLayers.length}</span>
-              </div>
-              <div className="revert-list">
-                {scenario.overrideLayers.map((layer) => (
-                  <button
-                    className="revert-row"
-                    type="button"
-                    key={layer.id}
-                    onClick={() => void revertLayer(layer.id)}
-                  >
-                    <span>{layer.label}</span>
-                    <span aria-hidden="true">↩</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          ) : null}
-        </aside>
-
-        <main className="results">
-          {playback ? <JourneyPlaybackPanel playback={playback} /> : null}
-          <WebGpuClusterExplorer
-            scenario={activeScenario}
-            selection={selection}
-            onSelectionChange={setSelection}
-            selectedProvenance={selectedProvenance}
-            onProvenanceChange={toggleProvenance}
-            generation={{
-              state: generationState,
-              progress: generationProgress,
-              error: generationError,
-            }}
-            model={model}
-            plannedJourney={plannedJourney}
-            journeySample={playback?.sample}
-          />
-          {workerFailure ? (
-            <section
-              className="result-card failure-card"
-              role="alert"
-              aria-labelledby="worker-failure-heading"
-            >
-              <div className="result-heading-row">
                 <div>
-                  <p className="eyebrow">Worker operation</p>
-                  <h2 id="worker-failure-heading">{workerFailure.outcome}</h2>
+                  <p className="eyebrow">Exact Gate workflow</p>
+                  <h2>Plan a Journey</h2>
                 </div>
-                <span className="status-pill status-error">{workerFailure.code}</span>
+                <span className="catalog-chip">T+0</span>
               </div>
-              <p>{workerFailure.message}</p>
-              {workerFailure.cause ? (
-                <details>
-                  <summary>Cause</summary>
-                  <pre>{workerFailure.cause}</pre>
-                </details>
+
+              <fieldset className="control-group">
+                <legend>Gate endpoints</legend>
+                <label>
+                  <span>Departure Gate</span>
+                  <select
+                    value={selectedDeparture}
+                    onChange={(event) =>
+                      setSelection((previous) =>
+                        selectExplorerGate(previous, "departure", event.currentTarget.value),
+                      )
+                    }
+                  >
+                    {departureOptions.map((gate) => (
+                      <option key={gate.id} value={gate.id}>
+                        {formatGateLabel(activeScenario, gate.id)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Destination Gate</span>
+                  <select
+                    value={selectedDestination}
+                    onChange={(event) =>
+                      setSelection((previous) =>
+                        selectExplorerGate(previous, "destination", event.currentTarget.value),
+                      )
+                    }
+                  >
+                    {destinationOptions.map((gate) => (
+                      <option key={gate.id} value={gate.id}>
+                        {formatGateLabel(activeScenario, gate.id)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </fieldset>
+
+              <fieldset className="control-group">
+                <legend>Ship and epoch</legend>
+                <label>
+                  <span>Ship Profile</span>
+                  <select
+                    value={selectedShip}
+                    onChange={(event) => setSelectedShip(event.currentTarget.value)}
+                  >
+                    {scenario.shipProfiles.map((ship) => (
+                      <option key={ship.id} value={ship.id}>
+                        {shipLabel(scenario, ship.id)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className="control-help">
+                  Gate travel requires a ZPZ Generator. Cruise speed remains exactly 0.999c in the
+                  Cluster Frame.
+                </p>
+                <label>
+                  <span>Departure epoch ({activeScenario.epoch.label} days)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={departureDays}
+                    onChange={(event) =>
+                      setDepartureDays(Math.max(0, Number(event.currentTarget.value)))
+                    }
+                  />
+                </label>
+              </fieldset>
+
+              <fieldset className="control-group">
+                <legend>Finite horizons</legend>
+                <label>
+                  <span>Latest arrival horizon (days)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={latestArrivalDays}
+                    onChange={(event) =>
+                      setLatestArrivalDays(Math.max(0, Number(event.currentTarget.value)))
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Strategic-wait horizon (days)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={strategicWaitDays}
+                    onChange={(event) =>
+                      setStrategicWaitDays(Math.max(0, Number(event.currentTarget.value)))
+                    }
+                  />
+                </label>
+                <p className="control-help">
+                  No wait is inserted outside this explicit query horizon.
+                </p>
+              </fieldset>
+
+              <ProvenanceFilter selected={selectedProvenance} onChange={toggleProvenance} />
+              <UncertaintyControls
+                controls={uncertaintyControls}
+                values={nominals}
+                onChange={(path, value) =>
+                  setNominals((previous) => ({ ...previous, [path]: value }))
+                }
+                onApply={applyNominals}
+                disabled={uncertaintyControls.every(
+                  (control) => (nominals[control.path] ?? control.nominal) === control.nominal,
+                )}
+              />
+
+              <div className="planner-actions">
+                <button
+                  className="button button-primary plan-button"
+                  type="submit"
+                  disabled={planningState === "running"}
+                >
+                  {planningState === "running" ? "Planning…" : "Plan earliest arrival"}
+                </button>
+                {planningState === "running" ? (
+                  <button className="button button-danger" type="button" onClick={cancelPlan}>
+                    Cancel
+                  </button>
+                ) : null}
+              </div>
+              {planningState === "running" ? (
+                <div className="progress-block" aria-live="polite">
+                  <div className="progress-label">
+                    <span>{progress?.stage ?? "queued"}</span>
+                    <span>{Math.round(progressPercent)}%</span>
+                  </div>
+                  <progress max="100" value={progressPercent} />
+                  <small>Worker request {progress?.requestId ?? "starting"}</small>
+                </div>
               ) : null}
-            </section>
-          ) : null}
-          {planningState === "cancelled" ? (
-            <output className="notice notice-warning">
-              Planning was cancelled before a result was accepted.
-            </output>
-          ) : null}
-          <ResultPanel result={result} />
-        </main>
+            </form>
+
+            {scenario.overrideLayers.length > 0 ? (
+              <section className="control-card" aria-labelledby="revert-heading">
+                <div className="section-heading-row">
+                  <h2 id="revert-heading">Revert overrides</h2>
+                  <span className="count-badge">{scenario.overrideLayers.length}</span>
+                </div>
+                <div className="revert-list">
+                  {scenario.overrideLayers.map((layer) => (
+                    <button
+                      className="revert-row"
+                      type="button"
+                      key={layer.id}
+                      onClick={() => void revertLayer(layer.id)}
+                    >
+                      <span>{layer.label}</span>
+                      <span aria-hidden="true">↩</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+          </aside>
+        </details>
+
+        <details className="app-hud-drawer app-hud-results" name="app-hud">
+          <summary>
+            <span>Journey timeline</span>
+            <small>
+              {planningState === "running"
+                ? "Planning…"
+                : plannedJourney === undefined
+                  ? "No active route"
+                  : "Route ready"}
+            </small>
+          </summary>
+          <main className="results">
+            {playback ? <JourneyPlaybackPanel playback={playback} /> : null}
+            {workerFailure ? (
+              <section
+                className="result-card failure-card"
+                role="alert"
+                aria-labelledby="worker-failure-heading"
+              >
+                <div className="result-heading-row">
+                  <div>
+                    <p className="eyebrow">Worker operation</p>
+                    <h2 id="worker-failure-heading">{workerFailure.outcome}</h2>
+                  </div>
+                  <span className="status-pill status-error">{workerFailure.code}</span>
+                </div>
+                <p>{workerFailure.message}</p>
+                {workerFailure.cause ? (
+                  <details>
+                    <summary>Cause</summary>
+                    <pre>{workerFailure.cause}</pre>
+                  </details>
+                ) : null}
+              </section>
+            ) : null}
+            {planningState === "cancelled" ? (
+              <output className="notice notice-warning">
+                Planning was cancelled before a result was accepted.
+              </output>
+            ) : null}
+            <ResultPanel result={result} />
+          </main>
+        </details>
       </div>
 
       <footer className="app-footer">

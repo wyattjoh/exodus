@@ -802,6 +802,10 @@ export function isWebGpuPointVisible(
   );
 }
 
+// A camera can enter the conservative cluster sphere. This remains the finest-detail case,
+// but renderer contracts require a finite LOD measurement.
+const LOD_RADIUS_SATURATION_PIXELS = Number.MAX_VALUE;
+
 function projectedClusterRadiusPixels(
   contract: WebGpuScaleContract,
   view: WebGpuClusterView,
@@ -833,11 +837,11 @@ function projectedClusterRadiusPixels(
   const wExtent = rowLength(3) * radius;
   const minimumW = centerW - wExtent;
   if (minimumW <= 0) {
-    return Number.POSITIVE_INFINITY;
+    return LOD_RADIUS_SATURATION_PIXELS;
   }
   const horizontal = (rowLength(0) * radius * view.viewportWidth * 0.5) / minimumW;
   const vertical = (rowLength(1) * radius * view.viewportHeight * 0.5) / minimumW;
-  return Math.max(horizontal, vertical);
+  return Math.min(LOD_RADIUS_SATURATION_PIXELS, Math.max(horizontal, vertical));
 }
 
 /**

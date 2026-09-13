@@ -53,6 +53,17 @@ bun run build
 bun run preview
 ```
 
+Run the 1440×900 MacBook HUD and overlap check with Playwright:
+
+```sh
+bunx playwright install chromium
+bun run test:visual
+bun run test:visual:screenshots
+```
+
+Set `STAR_MAP_SCREENSHOTS=1` directly, or use the screenshot script above, to regenerate every
+UI-state capture under ignored `.scratch/playwright/star-map-macbook/`.
+
 The production build includes a versioned manifest and service worker. After the first successful
 load, the calculator shell and worker assets are served from the browser cache and route planning
 remains local-only. `bun run browser:dev`, `bun run browser:build`, and `bun run browser:preview`

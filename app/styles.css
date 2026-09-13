@@ -1,33 +1,41 @@
 :root {
   color-scheme: dark;
   font-family: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
-  color: #edf2f0;
-  background: #0a0f12;
+  color: #fff1d2;
+  background: #090608;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --ink: #edf2f0;
-  --muted: #91a4a3;
-  --faint: #617270;
-  --line: #273738;
-  --panel: #111a1d;
-  --panel-strong: #172326;
-  --mint: #8ce0c5;
-  --mint-strong: #4abf9e;
-  --blue: #9ac6ef;
-  --amber: #f2c879;
-  --red: #ff9e9e;
-  --shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+  --ink: #fff1d2;
+  --muted: #c6b69c;
+  --faint: #897762;
+  --line: #4d342a;
+  --panel: #17100f;
+  --panel-strong: #231714;
+  --mint: #f0b45c;
+  --mint-strong: #d98b38;
+  --blue: #e4c18d;
+  --amber: #ffc66d;
+  --red: #ff9a7a;
+  --shadow: 0 20px 60px rgba(0, 0, 0, 0.48);
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   min-width: 320px;
   margin: 0;
-  background: radial-gradient(circle at 80% -10%, rgba(67, 123, 121, 0.2), transparent 36rem),
-    linear-gradient(135deg, #0a0f12 0%, #0d1417 60%, #0a0f12 100%);
+  background: radial-gradient(circle at 80% -10%, rgba(125, 48, 25, 0.22), transparent 36rem),
+    linear-gradient(135deg, #090608 0%, #130b0b 60%, #090608 100%);
 }
 
 button,
@@ -1070,5 +1078,268 @@ pre {
   *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* The immersive application is one locked viewport; every calculator surface is a HUD overlay. */
+.app-shell:has(.immersive-map) {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  max-width: none;
+  padding: 0;
+  overflow: hidden;
+}
+
+.app-shell:has(.immersive-map) .masthead {
+  position: absolute;
+  z-index: 6;
+  bottom: 18px;
+  left: 18px;
+  display: flex;
+  width: min(330px, calc(100% - 36px));
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 205, 137, 0.24);
+  border-radius: 12px;
+  background: rgba(23, 14, 13, 0.82);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.app-shell:has(.immersive-map) .masthead .eyebrow {
+  margin-bottom: 3px;
+}
+
+.app-shell:has(.immersive-map) .masthead h1 {
+  max-width: none;
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.app-shell:has(.immersive-map) .masthead .lede {
+  display: none;
+}
+
+.app-shell:has(.immersive-map) .app-status {
+  min-width: 132px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 0.7rem;
+}
+
+.app-shell:has(.immersive-map) > .notice {
+  position: absolute;
+  z-index: 10;
+  top: 50%;
+  left: 50%;
+  width: min(560px, calc(100% - 36px));
+  margin: 0;
+  transform: translate(-50%, -50%);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px);
+}
+
+.app-shell:has(.immersive-map) .workspace {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
+.app-hud-drawer {
+  position: absolute;
+  overflow: hidden;
+  border: 1px solid rgba(255, 205, 137, 0.25);
+  border-radius: 12px;
+  background: rgba(23, 14, 13, 0.86);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  backdrop-filter: blur(16px);
+}
+
+.app-hud-drawer[open] {
+  display: block;
+}
+
+.app-hud-drawer > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  gap: 12px;
+  padding: 9px 12px;
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+
+.app-hud-drawer > summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-hud-drawer > summary::before {
+  color: var(--amber);
+  content: "+";
+  font-family: "DM Mono", ui-monospace, monospace;
+}
+
+.app-hud-drawer[open] > summary {
+  border-bottom: 1px solid rgba(255, 205, 137, 0.18);
+}
+
+.app-hud-drawer[open] > summary::before {
+  content: "−";
+}
+
+.app-hud-drawer > summary small {
+  overflow: hidden;
+  color: var(--faint);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.58rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-hud-controls {
+  top: 250px;
+  left: 18px;
+  width: min(340px, calc(100% - 36px));
+}
+
+.app-hud-controls[open] {
+  bottom: 104px;
+}
+
+.app-hud-results {
+  bottom: 18px;
+  left: 50%;
+  width: min(520px, calc(100% - 760px));
+  transform: translateX(-50%);
+}
+
+.app-hud-results[open] {
+  height: min(56dvh, 620px);
+}
+
+.app-hud-drawer[open] > .sidebar,
+.app-hud-drawer[open] > .results {
+  position: absolute;
+  inset: 44px 0 0;
+  min-height: 0;
+  padding: 10px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.app-hud-drawer[open] > .results {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-hud-results .journey-playback-card,
+.app-hud-results .result-stack,
+.app-hud-results .result-card,
+.app-hud-results .empty-result,
+.app-hud-results .journey-playback-options label {
+  min-width: 0;
+}
+
+.app-hud-results .journey-playback-options label {
+  flex-basis: 140px;
+}
+
+.app-hud-results .journey-playback-options select {
+  width: 100%;
+  min-width: 0;
+}
+
+.app-hud-drawer .control-card,
+.app-hud-drawer .result-card,
+.app-hud-drawer .empty-result,
+.app-hud-drawer .journey-playback-card {
+  box-shadow: none;
+}
+
+.app-shell:has(.app-hud-drawer[open]) .immersive-map .explorer-legend,
+.app-shell:has(.app-hud-drawer[open]) .immersive-map .camera-help {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.app-shell:has(.immersive-map) .app-footer {
+  position: absolute;
+  z-index: 5;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  width: min(320px, calc(100% - 36px));
+  gap: 4px;
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 205, 137, 0.2);
+  border-radius: 10px;
+  background: rgba(23, 14, 13, 0.78);
+  backdrop-filter: blur(12px);
+}
+
+@media (max-width: 1100px) {
+  .app-shell:has(.immersive-map) .masthead,
+  .app-shell:has(.immersive-map) .app-footer {
+    display: none;
+  }
+
+  .app-hud-controls,
+  .app-hud-results {
+    top: 250px;
+    bottom: auto;
+    width: calc(50% - 18px);
+    transform: none;
+  }
+
+  .app-hud-controls {
+    right: auto;
+    left: 12px;
+  }
+
+  .app-hud-results {
+    right: 12px;
+    left: auto;
+  }
+
+  .app-hud-controls[open],
+  .app-hud-results[open] {
+    z-index: 8;
+    inset: 250px 12px 12px;
+    width: auto;
+    height: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .app-hud-controls,
+  .app-hud-results {
+    top: 202px;
+  }
+
+  .app-hud-controls[open],
+  .app-hud-results[open] {
+    inset: 202px 10px 10px;
+  }
+
+  .app-shell:has(.immersive-map) > .notice {
+    width: calc(100% - 20px);
   }
 }

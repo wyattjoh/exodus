@@ -549,6 +549,45 @@ const BUFFER_USAGE_UNIFORM = 0x40;
 const MIN_VERTEX_BUFFER_BYTES = 256;
 const MAX_WEBGPU_U32 = 0xffff_ffff;
 const MAX_COMPUTE_WORKGROUPS_PER_DIMENSION = 65_535;
+/**
+ * Procedural full-screen WebGPU background for the Cluster map.
+ *
+ * The shader is static, so it respects reduced-motion preferences while rendering stellar gas,
+ * rust nebulae, and a sparse amber star field entirely on the GPU.
+ */
+export const WEBGPU_STELLAR_BACKGROUND_SHADER = /* wgsl */ `
+struct BackgroundVertex {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn backgroundVertex(@builtin(vertex_index) index: u32) -> BackgroundVertex {
+  var positions = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
+  var output: BackgroundVertex;
+  output.position = vec4<f32>(positions[index], 0.999, 1.0);
+  output.uv = positions[index] * 0.5 + vec2<f32>(0.5);
+  return output;
+}
+
+fn hash(point: vec2<f32>) -> f32 {
+  return fract(sin(dot(point, vec2<f32>(127.1, 311.7))) * 43758.5453);
+}
+
+@fragment
+fn backgroundFragment(input: BackgroundVertex) -> @location(0) vec4<f32> {
+  let uv = input.uv;
+  let gasA = exp(-7.0 * length(uv - vec2<f32>(0.22, 0.63)));
+  let gasB = exp(-10.0 * length(uv - vec2<f32>(0.76, 0.28)));
+  let cell = floor(uv * 220.0);
+  let star = select(0.0, 1.0, hash(cell) > 0.9965) * (0.55 + 0.45 * hash(cell + 4.0));
+  let ink = vec3<f32>(0.008, 0.006, 0.009);
+  let rust = vec3<f32>(0.32, 0.075, 0.025) * gasA + vec3<f32>(0.16, 0.045, 0.02) * gasB;
+  let amber = vec3<f32>(1.0, 0.61, 0.23) * star;
+  return vec4<f32>(ink + rust + amber, 1.0);
+}
+`;
+
 const SHADER = /* wgsl */ `
 struct Camera {
   viewProjection: mat4x4<f32>,
@@ -2764,6 +2803,7 @@ function createScaleRenderer(
   let overlayBindGroup: unknown = undefined;
   let computePipeline: unknown = undefined;
   let renderPipeline: unknown = undefined;
+  let backgroundPipeline: unknown = undefined;
   let overlayPointPipeline: unknown = undefined;
   let overlayLinePipeline: unknown = undefined;
   let computeBindGroupLayout: unknown = undefined;
@@ -2909,6 +2949,17 @@ function createScaleRenderer(
         targets: [{ format }],
       },
       primitive: { topology: "point-list" },
+    });
+    const backgroundShader = device.createShaderModule({ code: WEBGPU_STELLAR_BACKGROUND_SHADER });
+    backgroundPipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [renderGroupZeroLayout] }),
+      vertex: { module: backgroundShader, entryPoint: "backgroundVertex", buffers: [] },
+      fragment: {
+        module: backgroundShader,
+        entryPoint: "backgroundFragment",
+        targets: [{ format }],
+      },
+      primitive: { topology: "triangle-list" },
     });
     const overlayShader = device.createShaderModule({ code: SHADER });
     const overlayPipelineLayout = device.createPipelineLayout({
@@ -3330,7 +3381,7 @@ function createScaleRenderer(
         colorAttachments: [
           {
             view,
-            clearValue: { r: 0.025, g: 0.055, b: 0.07, a: 1 },
+            clearValue: { r: 0.008, g: 0.006, b: 0.009, a: 1 },
             loadOp: "clear",
             storeOp: "store",
           },
@@ -3354,6 +3405,8 @@ function createScaleRenderer(
           }
         }
       }
+      renderPass.setPipeline(backgroundPipeline);
+      renderPass.draw(3);
       renderPass.setPipeline(renderPipeline);
       renderPass.setBindGroup(1, renderGroup);
       drawIndirect.call(renderPass, indirect, 0);

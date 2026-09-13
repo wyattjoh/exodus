@@ -24,6 +24,11 @@ import {
   WEBGPU_POINT_STRIDE_BYTES,
 } from "../src/webgpu-scale";
 import { generateClusterRegion } from "../src/index";
+import {
+  createCameraState,
+  createExplorerViewProjectionMatrix,
+  zoomCamera,
+} from "../app/cluster-explorer";
 
 const identityView = Object.freeze({
   viewProjectionMatrix: Object.freeze([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
@@ -145,6 +150,28 @@ describe("bounded WebGPU scale contract", () => {
     expect(prepareWebGpuScale(contract, identityView).budget.pointBufferBytes).toBe(
       MAX_WEBGPU_VISIBLE_POINTS * WEBGPU_POINT_STRIDE_BYTES,
     );
+  });
+
+  test("saturates LOD to a finite finest-detail radius when zoom enters the cluster", () => {
+    const contract = createWebGpuScaleContract({
+      logicalPopulation: 10_000,
+      seed: "inside-cluster",
+      generatorVersion: "globular-v1",
+      regionRadiusMeters: 5e17,
+    });
+    const camera = zoomCamera(createCameraState(undefined), -100_000);
+    const viewport = { width: 800, height: 500 };
+    const lod = selectWebGpuLod(contract, {
+      viewProjectionMatrix: Array.from(createExplorerViewProjectionMatrix(camera, viewport)),
+      viewportWidth: viewport.width,
+      viewportHeight: viewport.height,
+      cameraDistance: camera.distance,
+      far: camera.far ?? 100,
+      worldRadiusMeters: contract.regionRadiusMeters,
+    });
+
+    expect(Number.isFinite(lod.apparentRadiusPixels)).toBe(true);
+    expect(lod.range.logicalStride).toBe(1);
   });
 
   test("derives detail from the supplied projection matrix rather than viewport alone", () => {

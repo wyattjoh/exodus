@@ -4,7 +4,7 @@
     "enabled": true
   },
   "files": {
-    "ignore": [".pi/**", "dist/**"]
+    "ignore": [".pi/**", ".scratch/**", "dist/**"]
   },
   "formatter": {
     "enabled": true,

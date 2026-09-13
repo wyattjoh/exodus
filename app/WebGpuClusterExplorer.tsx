@@ -98,7 +98,25 @@ const PROVENANCE_COLORS: Readonly<
   generated: color(0.72, 0.56, 0.95, 0.98),
   override: color(1, 0.48, 0.48, 0.98),
 });
-const SELECTED_COLOR = Object.freeze([1, 1, 1, 1]) as readonly [number, number, number, number];
+const SELECTED_COLOR = Object.freeze([1, 0.95, 0.82, 1]) as readonly [
+  number,
+  number,
+  number,
+  number,
+];
+const DEPARTURE_COLOR = Object.freeze([1, 0.66, 0.2, 1]) as readonly [
+  number,
+  number,
+  number,
+  number,
+];
+const DESTINATION_COLOR = Object.freeze([1, 0.3, 0.16, 1]) as readonly [
+  number,
+  number,
+  number,
+  number,
+];
+const SHIP_COLOR = Object.freeze([1, 0.92, 0.62, 1]) as readonly [number, number, number, number];
 const CONNECTION_ALPHA = 0.42;
 
 type StartupState =
@@ -114,6 +132,12 @@ function pointColor(
   point: ExplorerPoint,
   selection: ExplorerSelection,
 ): readonly [number, number, number, number] {
+  if (point.id === selection.departureGateId) {
+    return DEPARTURE_COLOR;
+  }
+  if (point.id === selection.destinationGateId) {
+    return DESTINATION_COLOR;
+  }
   if (point.id === selection.selectedEntityId) {
     return SELECTED_COLOR;
   }
@@ -158,7 +182,7 @@ function renderScene(
               journeySample.shipPosition.y.value / scene.extentMeters,
               journeySample.shipPosition.z.value / scene.extentMeters,
             ]) as readonly [number, number, number],
-            color: Object.freeze([0.98, 0.98, 1, 1]) as readonly [number, number, number, number],
+            color: SHIP_COLOR,
           }),
         ];
   return Object.freeze({
@@ -303,6 +327,7 @@ export function WebGpuClusterExplorer({
   const [renderWarning, setRenderWarning] = useState("");
   const [query, setQuery] = useState("");
   const [cameraRevision, setCameraRevision] = useState(0);
+  const initiallyFocusedScenario = useRef<CompiledScenario | undefined>(undefined);
 
   const scene = useMemo(
     () => buildClusterExplorerScene(scenario, selectedProvenance),
@@ -324,6 +349,19 @@ export function WebGpuClusterExplorer({
   const generatedSystemCount = scenario.systems.filter(
     (system) => system.provenance.kind === "generated",
   ).length;
+
+  useEffect(() => {
+    if (initiallyFocusedScenario.current === scenario) {
+      return;
+    }
+    const origin = findExplorerEntity(scene, selection.departureGateId);
+    if (origin === undefined) {
+      return;
+    }
+    cameraRef.current = focusCameraOnPoint(cameraRef.current, origin.position);
+    initiallyFocusedScenario.current = scenario;
+    setCameraRevision((value) => value + 1);
+  }, [scenario, scene, selection.departureGateId]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -559,8 +597,8 @@ export function WebGpuClusterExplorer({
   );
 
   return (
-    <section className="explorer-card" aria-labelledby="cluster-explorer-heading">
-      <div className="section-heading-row explorer-heading">
+    <section className="explorer-card immersive-map" aria-labelledby="cluster-explorer-heading">
+      <header className="section-heading-row explorer-heading map-hud map-hud-header">
         <div>
           <p className="eyebrow">WebGPU / CLUSTER FRAME</p>
           <h2 id="cluster-explorer-heading">Centauri Cluster explorer</h2>
@@ -574,10 +612,21 @@ export function WebGpuClusterExplorer({
           ) : null}
           <span>{generationLabel(generation)}</span>
         </div>
-      </div>
-      <p className="control-help explorer-intro">
+      </header>
+      <p className="control-help explorer-intro map-hud map-hud-intro">
         Systems are shown at Cluster scale. Gate Connections identify paired Gates; when Journey
         playback is active, Gate worldlines and the current ship sample share its coordinate time.
+      </p>
+      <p className="map-route-status" aria-label="Active route endpoints">
+        <strong>Departure</strong>{" "}
+        {selection.departureGateId === undefined
+          ? "Not selected"
+          : gateLabel(scene, selection.departureGateId)}{" "}
+        <span aria-hidden="true">→</span> <strong>Destination</strong>{" "}
+        {selection.destinationGateId === undefined
+          ? "Not selected"
+          : gateLabel(scene, selection.destinationGateId)}
+        {plannedJourney === undefined ? " · Select endpoints to plan" : " · Route plan active"}
       </p>
       {startup.state === "failed" ? (
         <section className="webgpu-failure" role="alert" aria-labelledby="webgpu-failure-heading">
@@ -600,8 +649,8 @@ export function WebGpuClusterExplorer({
           ) : null}
         </section>
       ) : (
-        <div className="explorer-layout">
-          <div className="explorer-viewport-wrap">
+        <div className="explorer-layout map-hud-layout">
+          <div className="explorer-viewport-wrap map-hud-viewport">
             <div className="explorer-toolbar">
               <label className="explorer-search">
                 <span>Search name or stable designation</span>
@@ -644,6 +693,14 @@ export function WebGpuClusterExplorer({
                   {provenanceLabel(kind)}
                 </span>
               ))}
+              <span className="provenance-key journey-departure-key">
+                <span className="provenance-swatch" aria-hidden="true" />
+                Departure Gate
+              </span>
+              <span className="provenance-key journey-destination-key">
+                <span className="provenance-swatch" aria-hidden="true" />
+                Destination Gate
+              </span>
               {journeySample !== undefined ? (
                 <span className="provenance-key journey-ship-key">
                   <span className="provenance-swatch" aria-hidden="true" />
@@ -656,7 +713,10 @@ export function WebGpuClusterExplorer({
               inspect
             </p>
           </div>
-          <aside className="explorer-inspector" aria-label="Cluster search and inspection">
+          <aside
+            className="explorer-inspector map-hud map-hud-inspector"
+            aria-label="Cluster search and inspection"
+          >
             <fieldset className="explorer-filter">
               <legend>Visible Provenance</legend>
               {provenanceKinds.map((kind) => (

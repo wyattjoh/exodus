@@ -22,6 +22,8 @@
     "lint": "biome lint .",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "test:visual": "PLAYWRIGHT_LAST_RUN_OUTPUT_FILE=.scratch/playwright/last-run.json playwright test",
+    "test:visual:screenshots": "PLAYWRIGHT_LAST_RUN_OUTPUT_FILE=.scratch/playwright/last-run.json STAR_MAP_SCREENSHOTS=1 playwright test",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun test"
   },
   "dependencies": {
@@ -30,6 +32,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@playwright/test": "^1.63.0",
     "@types/bun": "latest",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",

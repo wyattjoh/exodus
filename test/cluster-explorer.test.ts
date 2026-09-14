@@ -117,11 +117,17 @@ describe("Cluster explorer scene and selection seam", () => {
     if (destination === undefined || center === undefined) {
       throw new Error("Expected generated Systems for a moving neighborhood.");
     }
-    const neighborhood = buildClusterExplorerNeighborhoodAt(fullScene, center, 3, [destination.id]);
+    const neighborhood = buildClusterExplorerNeighborhoodAt(fullScene, center, 3, [
+      destination.id,
+      destination.id,
+    ]);
 
     expect(neighborhood.systems).toHaveLength(3);
     expect(neighborhood.systems[0]?.id).toBe(destination.id);
     expect(neighborhood.systems.map((system) => system.id)).toContain(destination.id);
+    expect(new Set(neighborhood.systems.map((system) => system.id)).size).toBe(
+      neighborhood.systems.length,
+    );
     expect(neighborhood.entities).toEqual(neighborhood.systems);
   });
 

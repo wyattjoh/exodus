@@ -17,7 +17,9 @@ import {
 import {
   advanceJourneyCoordinateTime,
   createJourneyPlaybackRuntime,
+  DEFAULT_PLAYBACK_RATE,
   journeyPhasePresentationSeconds,
+  PLAYBACK_RATES,
   type JourneyPlaybackScheduler,
 } from "../app/journey-playback-runtime";
 import {
@@ -163,6 +165,11 @@ describe("Journey playback mapping and lifecycle", () => {
         first.index,
       ),
     ).toBe(timeline.arrivalCoordinateTime.value);
+  });
+
+  test("offers voyage-scale playback rates with a visible-motion default", () => {
+    expect(DEFAULT_PLAYBACK_RATE).toBe(10_000_000);
+    expect(PLAYBACK_RATES).toEqual([1, 100, 10_000, 1_000_000, 10_000_000, 100_000_000]);
   });
 
   test("uses one scheduled loop and advances each timestamp delta once", () => {

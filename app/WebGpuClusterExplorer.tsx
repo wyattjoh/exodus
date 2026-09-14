@@ -88,6 +88,7 @@ export type WebGpuClusterExplorerProps = {
   readonly model: Pick<JourneyModel, "evaluateWorldlines"> | undefined;
   readonly plannedJourney: RoutePlan | undefined;
   readonly journeySample: JourneySample | undefined;
+  readonly isJourneyPlaying: boolean;
 };
 
 function color(
@@ -130,7 +131,7 @@ const SHIP_COLOR = Object.freeze([1, 0.92, 0.62, 1]) as readonly [number, number
 const CONNECTION_ALPHA = 0.42;
 const FOCUS_TRANSITION_MILLISECONDS = 520;
 const NEIGHBORHOOD_TRANSITION_MILLISECONDS = 900;
-const NEIGHBORHOOD_SYSTEM_LIMIT = 60;
+const NEIGHBORHOOD_SYSTEM_LIMIT = 24;
 const BACKGROUND_STAR_COUNT = 256;
 
 type ClusterContextMenu = {
@@ -365,6 +366,48 @@ function neighborhoodCameraKey(
   return `${scenarioId}:${focusedSystemId}:${scene.systems.map((system) => system.id).join(",")}`;
 }
 
+function focusCameraOnPoints(camera: CameraState, points: readonly ExplorerPoint[]): CameraState {
+  if (points.length === 0) {
+    return camera;
+  }
+  const minimum = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
+  const maximum = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY];
+  for (const point of points) {
+    for (let axis = 0; axis < 3; axis += 1) {
+      minimum[axis] = Math.min(
+        minimum[axis] ?? point.position[axis] ?? 0,
+        point.position[axis] ?? 0,
+      );
+      maximum[axis] = Math.max(
+        maximum[axis] ?? point.position[axis] ?? 0,
+        point.position[axis] ?? 0,
+      );
+    }
+  }
+  const target = Object.freeze([
+    ((minimum[0] ?? 0) + (maximum[0] ?? 0)) / 2,
+    ((minimum[1] ?? 0) + (maximum[1] ?? 0)) / 2,
+    ((minimum[2] ?? 0) + (maximum[2] ?? 0)) / 2,
+  ]) as CameraState["target"];
+  const radius = points.reduce(
+    (largest, point) =>
+      Math.max(
+        largest,
+        Math.hypot(
+          point.position[0] - target[0],
+          point.position[1] - target[1],
+          point.position[2] - target[2],
+        ),
+      ),
+    0,
+  );
+  return Object.freeze({
+    ...camera,
+    target,
+    distance: Math.max(0.3, Math.min(3.2, radius * 2.8)),
+  });
+}
+
 function generationLabel(generation: ClusterGenerationView): string {
   if (generation.state === "running") {
     const progress = generation.progress;
@@ -397,6 +440,7 @@ export function WebGpuClusterExplorer({
   model,
   plannedJourney,
   journeySample,
+  isJourneyPlaying,
 }: WebGpuClusterExplorerProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<WebGpuScaleRenderer | undefined>(undefined);
@@ -413,6 +457,7 @@ export function WebGpuClusterExplorer({
   const [focusProgress, setFocusProgress] = useState(0);
   const [systemFocus, setSystemFocus] = useState<SystemFocus | undefined>(undefined);
   const [navigation, setNavigation] = useState<NeighborhoodNavigation | undefined>(undefined);
+  const [cameraSubject, setCameraSubject] = useState<"map" | "ship">("map");
   const [neighborhoodSystemId, setNeighborhoodSystemId] = useState<StableId | undefined>(() =>
     selection.departureGateId === undefined
       ? scenario.systems[0]?.id
@@ -424,6 +469,37 @@ export function WebGpuClusterExplorer({
     () => buildClusterExplorerScene(scenario, selectedProvenance),
     [scenario, selectedProvenance],
   );
+  const routeSystemIds = useMemo(
+    () =>
+      Object.freeze([
+        ...new Set(
+          (plannedJourney?.gateIds ?? []).flatMap((gateId) => {
+            const systemId = scenario.index.gates.get(gateId)?.systemId;
+            return systemId === undefined ? [] : [systemId];
+          }),
+        ),
+      ]),
+    [plannedJourney, scenario],
+  );
+  const routeSystems = useMemo(
+    () =>
+      routeSystemIds.flatMap((systemId) => {
+        const system = fullScene.systems.find((candidate) => candidate.id === systemId);
+        return system === undefined ? [] : [system];
+      }),
+    [fullScene, routeSystemIds],
+  );
+  const samplePosition = useMemo(
+    () =>
+      journeySample === undefined
+        ? undefined
+        : (Object.freeze([
+            journeySample.shipPosition.x.value / fullScene.extentMeters,
+            journeySample.shipPosition.y.value / fullScene.extentMeters,
+            journeySample.shipPosition.z.value / fullScene.extentMeters,
+          ]) as CameraState["target"]),
+    [fullScene.extentMeters, journeySample],
+  );
   const focusedSystem =
     fullScene.systems.find((system) => system.id === neighborhoodSystemId) ?? fullScene.systems[0];
   const navigationDestination = fullScene.systems.find(
@@ -431,28 +507,48 @@ export function WebGpuClusterExplorer({
   );
   const displayedSystem = navigationDestination ?? focusedSystem;
   const scene = useMemo(() => {
-    if (navigation === undefined) {
-      return buildClusterExplorerNeighborhood(
-        fullScene,
+    if (navigation !== undefined) {
+      const movingCamera = interpolateCameraState(
+        navigation.fromCamera,
+        navigation.toCamera,
+        navigation.progress,
+      );
+      const retainedSystemIds = [
         focusedSystem?.id,
-        NEIGHBORHOOD_SYSTEM_LIMIT,
+        navigation.destinationSystemId,
+        ...routeSystemIds,
+      ].filter((id): id is StableId => id !== undefined);
+      return buildClusterExplorerNeighborhoodAt(
+        fullScene,
+        movingCamera.target,
+        NEIGHBORHOOD_SYSTEM_LIMIT + 1,
+        retainedSystemIds,
       );
     }
-    const movingCamera = interpolateCameraState(
-      navigation.fromCamera,
-      navigation.toCamera,
-      navigation.progress,
-    );
-    const retainedSystemIds = [focusedSystem?.id, navigation.destinationSystemId].filter(
-      (id): id is StableId => id !== undefined,
-    );
+    if (isJourneyPlaying && samplePosition !== undefined) {
+      return buildClusterExplorerNeighborhoodAt(
+        fullScene,
+        samplePosition,
+        NEIGHBORHOOD_SYSTEM_LIMIT + 1,
+        routeSystemIds,
+      );
+    }
+    const center = focusedSystem?.position ?? ([0, 0, 0] as const);
     return buildClusterExplorerNeighborhoodAt(
       fullScene,
-      movingCamera.target,
+      center,
       NEIGHBORHOOD_SYSTEM_LIMIT + 1,
-      retainedSystemIds,
+      [focusedSystem?.id, ...routeSystemIds].filter((id): id is StableId => id !== undefined),
     );
-  }, [focusedSystem?.id, fullScene, navigation]);
+  }, [
+    focusedSystem?.id,
+    focusedSystem?.position,
+    fullScene,
+    isJourneyPlaying,
+    navigation,
+    routeSystemIds,
+    samplePosition,
+  ]);
   const searchResults = useMemo(
     () => searchClusterExplorer(query.trim().length === 0 ? scene : fullScene, query).slice(0, 32),
     [fullScene, query, scene],
@@ -486,6 +582,27 @@ export function WebGpuClusterExplorer({
       projected: projectExplorerPoint(system.position, cameraRef.current, viewport),
     }))
     .filter(({ projected }) => projected.visible);
+  const neighborhoodSystemIds = new Set(scene.systems.map((system) => system.id));
+  const projectedAmbientSystems = fullScene.systems
+    .filter((system) => !neighborhoodSystemIds.has(system.id))
+    .map((system) => ({
+      system,
+      projected: projectExplorerPoint(system.position, cameraRef.current, viewport),
+    }))
+    .filter(({ projected }) => projected.visible);
+  const projectedCourse = (plannedJourney?.connectionIds ?? []).flatMap((connectionId) => {
+    const connection = fullScene.connections.find((candidate) => candidate.id === connectionId);
+    if (connection === undefined) {
+      return [];
+    }
+    const from = projectExplorerPoint(connection.endpoints[0], cameraRef.current, viewport);
+    const to = projectExplorerPoint(connection.endpoints[1], cameraRef.current, viewport);
+    return from.visible && to.visible ? [{ connectionId, from, to }] : [];
+  });
+  const projectedShip =
+    samplePosition === undefined
+      ? undefined
+      : projectExplorerPoint(samplePosition, cameraRef.current, viewport);
 
   useEffect(() => {
     if (focusedSystem !== undefined && focusedSystem.id !== neighborhoodSystemId) {
@@ -494,7 +611,7 @@ export function WebGpuClusterExplorer({
   }, [focusedSystem, neighborhoodSystemId]);
 
   useEffect(() => {
-    if (focusedSystem === undefined || navigation !== undefined) {
+    if (focusedSystem === undefined || navigation !== undefined || plannedJourney !== undefined) {
       return;
     }
     const key = neighborhoodCameraKey(scenario.id, focusedSystem.id, scene);
@@ -504,7 +621,33 @@ export function WebGpuClusterExplorer({
     cameraRef.current = focusCameraOnNeighborhood(cameraRef.current, scene, focusedSystem.id);
     focusedCameraKey.current = key;
     setCameraRevision((value) => value + 1);
-  }, [focusedSystem, navigation, scenario.id, scene]);
+  }, [focusedSystem, navigation, plannedJourney, scenario.id, scene]);
+
+  useEffect(() => {
+    if (plannedJourney === undefined || routeSystems.length === 0) {
+      return;
+    }
+    cameraRef.current = focusCameraOnPoints(cameraRef.current, routeSystems);
+    setCameraSubject("map");
+    const firstSystem = routeSystems[0];
+    if (firstSystem !== undefined) {
+      setNeighborhoodSystemId(firstSystem.id);
+    }
+    setCameraRevision((value) => value + 1);
+  }, [plannedJourney, routeSystems]);
+
+  useEffect(() => {
+    if (
+      cameraSubject !== "ship" ||
+      !isJourneyPlaying ||
+      samplePosition === undefined ||
+      navigation !== undefined
+    ) {
+      return;
+    }
+    cameraRef.current = moveCameraTarget(cameraRef.current, samplePosition);
+    setCameraRevision((value) => value + 1);
+  }, [cameraSubject, isJourneyPlaying, navigation, samplePosition]);
 
   useEffect(() => {
     return () => {
@@ -670,6 +813,7 @@ export function WebGpuClusterExplorer({
 
   const navigateToSystem = (point: ExplorerPoint): void => {
     select(point);
+    setCameraSubject("map");
     const destination = fullScene.systems.find((system) => system.id === point.systemId);
     if (destination === undefined) {
       return;
@@ -877,6 +1021,7 @@ export function WebGpuClusterExplorer({
   };
 
   const resetCamera = (): void => {
+    setCameraSubject("map");
     if (navigationFrameRef.current !== undefined) {
       cancelAnimationFrame(navigationFrameRef.current);
       navigationFrameRef.current = undefined;
@@ -892,6 +1037,20 @@ export function WebGpuClusterExplorer({
       focusedScene,
       focusedSystem?.id,
     );
+    setCameraRevision((value) => value + 1);
+  };
+
+  const focusShip = (): void => {
+    if (samplePosition === undefined) {
+      return;
+    }
+    if (navigationFrameRef.current !== undefined) {
+      cancelAnimationFrame(navigationFrameRef.current);
+      navigationFrameRef.current = undefined;
+    }
+    setNavigation(undefined);
+    setCameraSubject("ship");
+    cameraRef.current = moveCameraTarget(cameraRef.current, samplePosition);
     setCameraRevision((value) => value + 1);
   };
 
@@ -953,7 +1112,7 @@ export function WebGpuClusterExplorer({
     contextMenu === undefined ? undefined : findExplorerEntity(scene, contextMenu.entityId);
 
   return (
-    <section className="explorer-card immersive-map" aria-labelledby="cluster-explorer-heading">
+    <section className="explorer-card immersive-map" aria-label="Centauri Cluster map">
       <header className="section-heading-row explorer-heading map-hud map-hud-header">
         <div>
           <p className="eyebrow">WebGPU / CLUSTER FRAME</p>
@@ -1066,10 +1225,69 @@ export function WebGpuClusterExplorer({
                 onKeyDown={handleKeyDown}
                 onContextMenu={handleContextMenu}
               />
+              {projectedAmbientSystems.length > 0 ? (
+                <div className="cluster-ambient-systems" aria-hidden="true">
+                  {projectedAmbientSystems.map(({ system, projected }) => (
+                    <i
+                      key={system.id}
+                      style={{
+                        left: projected.x,
+                        top: projected.y,
+                        opacity: Math.max(0.12, Math.min(0.48, projected.scale * 0.32)),
+                        transform: `translate(-50%, -50%) scale(${projected.scale})`,
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {projectedCourse.length > 0 ? (
+                <svg
+                  className="cluster-course-overlay"
+                  viewBox={`0 0 ${viewport.width} ${viewport.height}`}
+                  preserveAspectRatio="none"
+                  role="img"
+                  aria-label="Planned interstellar course"
+                >
+                  {projectedCourse.map(({ connectionId, from, to }) => (
+                    <g key={connectionId}>
+                      <line
+                        className="cluster-course-glow"
+                        x1={from.x}
+                        y1={from.y}
+                        x2={to.x}
+                        y2={to.y}
+                      />
+                      <line
+                        className="cluster-course-line"
+                        x1={from.x}
+                        y1={from.y}
+                        x2={to.x}
+                        y2={to.y}
+                      />
+                    </g>
+                  ))}
+                </svg>
+              ) : null}
+              {projectedShip?.visible === true ? (
+                <button
+                  className={`journey-ship-chip ${cameraSubject === "ship" ? "is-selected" : ""}`}
+                  style={{ left: projectedShip.x, top: projectedShip.y }}
+                  type="button"
+                  aria-label="Journey ship. Select to follow the ship."
+                  aria-pressed={cameraSubject === "ship"}
+                  onClick={focusShip}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 2 16.2 9.4 22 12l-5.8 2.6L12 22l-4.2-7.4L2 12l5.8-2.6L12 2Z" />
+                  </svg>
+                  <span>Ship</span>
+                  <small>{cameraSubject === "ship" ? "Following" : "In transit"}</small>
+                </button>
+              ) : null}
               <div className="cluster-system-markers" aria-label="Materialized nearby Systems">
                 {projectedSystems.map(({ system, projected }) => (
                   <button
-                    className={`cluster-system-marker ${system.id === focusedSystem?.id ? "is-focused" : ""} ${system.id === selection.selectedEntityId ? "is-selected" : ""}`}
+                    className={`cluster-system-marker ${system.id === focusedSystem?.id ? "is-focused" : ""} ${system.id === selection.selectedEntityId ? "is-selected" : ""} ${routeSystemIds.includes(system.id) ? "is-route" : ""}`}
                     type="button"
                     key={system.id}
                     style={{ left: projected.x, top: projected.y }}

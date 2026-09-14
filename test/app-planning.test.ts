@@ -11,8 +11,10 @@ import {
   buildRoutePlanningRequest,
   createPlanningRevisionController,
   formatGateLabel,
+  formatSystemLabel,
   getScenarioUncertaintyControls,
   provenanceKinds,
+  resolveSystemGateEndpoints,
 } from "../app/planning";
 import { bundledCatalogScenarioInput } from "../app/catalog";
 
@@ -39,6 +41,21 @@ describe("calculator planning seam", () => {
 
     expect(formatGateLabel(generated.scenario, gate.id)).toBe(`${gate.name} · ${gate.designation}`);
     expect(formatGateLabel(generated.scenario, gate.id)).not.toBe(gate.id);
+  });
+
+  test("resolves System choices to the closest connected exact Gates", () => {
+    const scenario = requireScenario();
+
+    expect(formatSystemLabel(scenario, "system:aurora")).toBe("Aurora · CEN-1002");
+    expect(resolveSystemGateEndpoints(scenario, "system:terra", "system:aurora")).toEqual({
+      departureGateId: "gate:terra",
+      destinationGateId: "gate:aurora-entry",
+    });
+    expect(resolveSystemGateEndpoints(scenario, "system:aurora", "system:helios")).toEqual({
+      departureGateId: "gate:aurora-exit",
+      destinationGateId: "gate:helios",
+    });
+    expect(resolveSystemGateEndpoints(scenario, "system:terra", "system:missing")).toBeUndefined();
   });
 
   test("maps UI selections into a bounded domain request without calculating route physics", () => {

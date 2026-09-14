@@ -1343,3 +1343,302 @@ pre {
     width: calc(100% - 20px);
   }
 }
+
+/* The primary experience is one compact planning console over an unobstructed map. */
+.journey-console {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  width: min(410px, calc(100% - 36px));
+  max-height: calc(100dvh - 36px);
+  overflow: auto;
+  border: 1px solid rgba(255, 205, 137, 0.34);
+  border-radius: 18px;
+  background: rgba(18, 10, 10, 0.88);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.58);
+  pointer-events: auto;
+  backdrop-filter: blur(20px);
+  scrollbar-width: thin;
+}
+
+.journey-console .planner-form {
+  padding: 20px;
+}
+
+.journey-console-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.journey-console-heading .eyebrow {
+  margin-bottom: 5px;
+}
+
+.journey-console-heading h1 {
+  max-width: none;
+  margin: 0;
+  font-size: 1.45rem;
+  letter-spacing: -0.045em;
+  line-height: 1.08;
+}
+
+.journey-console-heading .status-dot {
+  flex: 0 0 auto;
+  margin-top: 6px;
+}
+
+.system-endpoints {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: 9px;
+  margin: 22px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.system-endpoints label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.system-endpoints select {
+  min-width: 0;
+  border-color: rgba(255, 205, 137, 0.3);
+  background: rgba(9, 6, 8, 0.88);
+  font-size: 0.76rem;
+  text-transform: none;
+}
+
+.course-arrow {
+  padding-bottom: 11px;
+  color: var(--amber);
+  font-family: "DM Mono", ui-monospace, monospace;
+}
+
+.journey-console .planner-actions {
+  margin-top: 13px;
+}
+
+.journey-console .plan-button {
+  min-height: 46px;
+  background: linear-gradient(135deg, #ffd189, #f0a344);
+  color: #211006;
+  font-size: 0.84rem;
+}
+
+.active-course {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 15px 0 2px;
+  border-top: 1px solid rgba(255, 205, 137, 0.24);
+}
+
+.active-course .eyebrow {
+  margin-bottom: 5px;
+  color: #ffe29f;
+}
+
+.active-course h2 {
+  color: var(--ink);
+  font-size: 0.98rem;
+}
+
+.active-course h2 span {
+  color: var(--amber);
+}
+
+.active-course p:last-child {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.63rem;
+}
+
+.course-playback-controls {
+  display: grid;
+  grid-template-columns: auto 76px;
+  flex: 0 0 164px;
+  gap: 7px;
+}
+
+.course-play-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  border-color: #ffe8ad;
+  background: #fff0bd;
+  color: #241207;
+  box-shadow: 0 0 24px rgba(255, 196, 93, 0.3);
+}
+
+.course-play-button:hover:not(:disabled) {
+  background: #fff8df;
+}
+
+.course-speed-control {
+  display: grid;
+  gap: 3px;
+  color: var(--faint);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.54rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.course-speed-control select {
+  min-height: 28px;
+  padding: 3px 6px;
+  border-color: rgba(255, 205, 137, 0.32);
+  background: rgba(9, 6, 8, 0.88);
+  color: var(--ink);
+  font-size: 0.68rem;
+}
+
+.course-reset-button {
+  grid-column: 1 / -1;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-color: rgba(255, 205, 137, 0.24);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.64rem;
+}
+
+.course-error {
+  display: block;
+  margin-top: 12px;
+  color: var(--red);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.journey-advanced {
+  margin-top: 16px;
+  padding-top: 2px;
+  border-top: 1px solid rgba(255, 205, 137, 0.18);
+}
+
+.journey-advanced > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+  color: var(--ink);
+  font-weight: 600;
+  list-style: none;
+}
+
+.journey-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.journey-advanced > summary::before {
+  color: var(--amber);
+  content: "+";
+  font-family: "DM Mono", ui-monospace, monospace;
+}
+
+.journey-advanced[open] > summary::before {
+  content: "−";
+}
+
+.journey-advanced > summary small {
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--faint);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.56rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.advanced-stack {
+  display: grid;
+  gap: 18px;
+  padding-top: 6px;
+}
+
+.advanced-stack .control-group {
+  padding-top: 16px;
+}
+
+.advanced-stack .control-card,
+.advanced-stack .result-card,
+.advanced-stack .empty-result,
+.advanced-stack .journey-playback-card {
+  padding: 16px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.advanced-stack .result-stack {
+  gap: 16px;
+}
+
+.advanced-stack .metric-grid,
+.advanced-stack .journey-clock-grid {
+  grid-template-columns: 1fr;
+}
+
+.advanced-stack .journey-playback-controls,
+.advanced-stack .journey-playback-options {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.advanced-stack .journey-scrubber {
+  grid-template-columns: 1fr;
+}
+
+.advanced-stack .journey-arrival-overlay,
+.advanced-stack .journey-arrival-key {
+  grid-column: 1;
+}
+
+.app-meta {
+  margin: 0;
+  color: var(--faint);
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 0.6rem;
+}
+
+@media (max-width: 560px) {
+  .journey-console {
+    top: 10px;
+    left: 10px;
+    width: calc(100% - 20px);
+    max-height: calc(100dvh - 20px);
+    border-radius: 14px;
+  }
+
+  .journey-console .planner-form {
+    padding: 16px;
+  }
+
+  .system-endpoints {
+    grid-template-columns: 1fr;
+  }
+
+  .course-arrow {
+    display: none;
+  }
+}

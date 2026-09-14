@@ -31,6 +31,124 @@ export function formatGateLabel(scenario: CompiledScenario, gateId: StableId): s
 }
 
 /**
+ * Formats a System option from the Scenario that owns it.
+ *
+ * @param scenario - Scenario containing the System.
+ * @param systemId - Stable identifier of the System to label.
+ * @returns A human-readable name and designation, or the identifier when unavailable.
+ */
+export function formatSystemLabel(scenario: CompiledScenario, systemId: StableId): string {
+  const system = scenario.index.systems.get(systemId);
+  return system === undefined ? systemId : `${system.name} · ${system.designation}`;
+}
+
+/**
+ * Exact Gate endpoints selected for a System-to-System planning request.
+ */
+export type SystemGateEndpoints = {
+  readonly departureGateId: StableId;
+  readonly destinationGateId: StableId;
+};
+
+function gateDistance(
+  adjacency: ReadonlyMap<StableId, ReadonlySet<StableId>>,
+  departureGateId: StableId,
+  destinationGateId: StableId,
+): number | undefined {
+  const queue: { readonly gateId: StableId; readonly distance: number }[] = [
+    { gateId: departureGateId, distance: 0 },
+  ];
+  const visited = new Set<StableId>([departureGateId]);
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index];
+    if (current === undefined) {
+      continue;
+    }
+    if (current.gateId === destinationGateId) {
+      return current.distance;
+    }
+    for (const neighbor of adjacency.get(current.gateId) ?? []) {
+      if (visited.has(neighbor)) {
+        continue;
+      }
+      visited.add(neighbor);
+      queue.push({ gateId: neighbor, distance: current.distance + 1 });
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolves simple System endpoints to the closest connected pair of exact Gates.
+ *
+ * Gates within one System are connected by an In-system Transfer edge, while paired Gates use
+ * their Gate Connection. Stable identifier ordering makes equal-hop choices deterministic.
+ *
+ * @param scenario - Active compiled Scenario containing the Gate network.
+ * @param departureSystemId - System where the Journey should begin.
+ * @param destinationSystemId - System where the Journey should end.
+ * @returns The closest connected Gate pair, or undefined when no route can join the Systems.
+ */
+export function resolveSystemGateEndpoints(
+  scenario: CompiledScenario,
+  departureSystemId: StableId,
+  destinationSystemId: StableId,
+): SystemGateEndpoints | undefined {
+  const sortedGates = [...scenario.gates].sort((left, right) => left.id.localeCompare(right.id));
+  const departureGates = sortedGates.filter((gate) => gate.systemId === departureSystemId);
+  const destinationGates = sortedGates.filter((gate) => gate.systemId === destinationSystemId);
+  if (departureGates.length === 0 || destinationGates.length === 0) {
+    return undefined;
+  }
+
+  const adjacency = new Map<StableId, Set<StableId>>(
+    sortedGates.map((gate) => [gate.id, new Set<StableId>()]),
+  );
+  const connect = (left: StableId, right: StableId): void => {
+    adjacency.get(left)?.add(right);
+    adjacency.get(right)?.add(left);
+  };
+  const gatesBySystem = new Map<StableId, StableId[]>();
+  for (const gate of sortedGates) {
+    const systemGates = gatesBySystem.get(gate.systemId) ?? [];
+    systemGates.push(gate.id);
+    gatesBySystem.set(gate.systemId, systemGates);
+  }
+  for (const systemGates of gatesBySystem.values()) {
+    for (let leftIndex = 0; leftIndex < systemGates.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < systemGates.length; rightIndex += 1) {
+        const left = systemGates[leftIndex];
+        const right = systemGates[rightIndex];
+        if (left !== undefined && right !== undefined) {
+          connect(left, right);
+        }
+      }
+    }
+  }
+  for (const connection of scenario.gateConnections) {
+    connect(connection.gateAId, connection.gateBId);
+  }
+
+  let best: { readonly endpoints: SystemGateEndpoints; readonly distance: number } | undefined;
+  for (const departureGate of departureGates) {
+    for (const destinationGate of destinationGates) {
+      const distance = gateDistance(adjacency, departureGate.id, destinationGate.id);
+      if (distance === undefined || (best !== undefined && best.distance <= distance)) {
+        continue;
+      }
+      best = {
+        endpoints: Object.freeze({
+          departureGateId: departureGate.id,
+          destinationGateId: destinationGate.id,
+        }),
+        distance,
+      };
+    }
+  }
+  return best?.endpoints;
+}
+
+/**
  * Form values needed to construct a finite route-planning request.
  */
 export type RoutePlanningForm = {

@@ -424,4 +424,4 @@ export function journeyPlaybackKey(timeline: MultiLegJourneyTimeline): StableId 
   return `${timeline.departureGateId}:${timeline.destinationGateId}:${timeline.departureCoordinateTime.value}:${timeline.arrivalCoordinateTime.value}` as StableId;
 }
 
-export { DEFAULT_PLAYBACK_RATE };
+export { DEFAULT_PLAYBACK_RATE, PLAYBACK_RATES };

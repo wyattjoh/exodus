@@ -52,8 +52,8 @@ export type JourneyPlaybackRuntimeOptions = {
 };
 
 const EPSILON = 1e-9;
-const DEFAULT_PLAYBACK_RATE = 100;
-const PLAYBACK_RATES = Object.freeze([1, 10, 100, 1_000, 10_000]);
+const DEFAULT_PLAYBACK_RATE = 10_000_000;
+const PLAYBACK_RATES = Object.freeze([1, 100, 10_000, 1_000_000, 10_000_000, 100_000_000]);
 
 const PHASE_FOCUS_WEIGHTS: Readonly<Record<JourneyPhaseKind, number>> = Object.freeze({
   "departure-transition": 1,

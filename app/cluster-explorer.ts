@@ -394,8 +394,9 @@ export function buildClusterExplorerNeighborhoodAt(
   maximumSystemCount = 17,
   retainedSystemIds: readonly StableId[] = [],
 ): ClusterExplorerScene {
-  const retainedIds = new Set(retainedSystemIds);
-  const retained = retainedSystemIds.flatMap((id) => {
+  const uniqueRetainedSystemIds = [...new Set(retainedSystemIds)];
+  const retainedIds = new Set(uniqueRetainedSystemIds);
+  const retained = uniqueRetainedSystemIds.flatMap((id) => {
     const system = scene.systems.find((candidate) => candidate.id === id);
     return system === undefined ? [] : [system];
   });

@@ -36,6 +36,7 @@ import {
   focusCameraOnNeighborhood,
   focusCameraOnPoint,
   interpolateCameraState,
+  moveCameraTarget,
   orbitCamera,
   panCamera,
   pickExplorerEntity,
@@ -129,7 +130,7 @@ const SHIP_COLOR = Object.freeze([1, 0.92, 0.62, 1]) as readonly [number, number
 const CONNECTION_ALPHA = 0.42;
 const FOCUS_TRANSITION_MILLISECONDS = 520;
 const NEIGHBORHOOD_TRANSITION_MILLISECONDS = 900;
-const NEIGHBORHOOD_SYSTEM_LIMIT = 12;
+const NEIGHBORHOOD_SYSTEM_LIMIT = 60;
 const BACKGROUND_STAR_COUNT = 256;
 
 type ClusterContextMenu = {
@@ -356,6 +357,14 @@ function selectedPoint(
   return findExplorerEntity(scene, selection.selectedEntityId ?? selection.focusedEntityId);
 }
 
+function neighborhoodCameraKey(
+  scenarioId: StableId,
+  focusedSystemId: StableId,
+  scene: ClusterExplorerScene,
+): string {
+  return `${scenarioId}:${focusedSystemId}:${scene.systems.map((system) => system.id).join(",")}`;
+}
+
 function generationLabel(generation: ClusterGenerationView): string {
   if (generation.state === "running") {
     const progress = generation.progress;
@@ -488,7 +497,7 @@ export function WebGpuClusterExplorer({
     if (focusedSystem === undefined || navigation !== undefined) {
       return;
     }
-    const key = `${scenario.id}:${focusedSystem.id}:${scene.systems.map((system) => system.id).join(",")}`;
+    const key = neighborhoodCameraKey(scenario.id, focusedSystem.id, scene);
     if (focusedCameraKey.current === key) {
       return;
     }
@@ -678,7 +687,8 @@ export function WebGpuClusterExplorer({
       destination.id,
       NEIGHBORHOOD_SYSTEM_LIMIT,
     );
-    const toCamera = focusCameraOnNeighborhood(fromCamera, destinationScene, destination.id);
+    const toCamera = moveCameraTarget(fromCamera, destination.position);
+    focusedCameraKey.current = neighborhoodCameraKey(scenario.id, destination.id, destinationScene);
     const transition = Object.freeze({
       destinationSystemId: destination.id,
       fromCamera,
@@ -1068,7 +1078,7 @@ export function WebGpuClusterExplorer({
                     onClick={() => navigateToSystem(system)}
                     onContextMenu={(event) => openContextMenu(system, event)}
                   >
-                    <i />
+                    <i style={{ transform: `scale(${projected.scale})` }} />
                     <span>{system.name}</span>
                     <small>{system.designation}</small>
                   </button>

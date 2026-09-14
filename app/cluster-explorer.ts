@@ -118,6 +118,8 @@ export type ProjectedExplorerPoint = {
   readonly x: number;
   readonly y: number;
   readonly depth: number;
+  /** Perspective scale for a fixed-size marker at this depth. */
+  readonly scale: number;
   readonly visible: boolean;
 };
 
@@ -196,6 +198,8 @@ const DEFAULT_CAMERA_YAW = Math.PI / 4;
 const DEFAULT_CAMERA_PITCH = 0.36;
 const NEIGHBORHOOD_MIN_CAMERA_DISTANCE = 0.18;
 const NEIGHBORHOOD_MAX_CAMERA_DISTANCE = 1.6;
+const PROJECTED_POINT_MIN_SCALE = 0.35;
+const PROJECTED_POINT_MAX_SCALE = 1.4;
 
 function vector(x: number, y: number, z: number): ExplorerVector3 {
   return Object.freeze([x, y, z]) as ExplorerVector3;
@@ -803,6 +807,17 @@ export function panCamera(camera: CameraState, deltaX: number, deltaY: number): 
 }
 
 /**
+ * Moves the camera target without changing its current zoom or orbit.
+ *
+ * @param camera - Current camera state.
+ * @param position - Normalized point to center.
+ * @returns Updated immutable camera state with its distance and angles preserved.
+ */
+export function moveCameraTarget(camera: CameraState, position: ExplorerVector3): CameraState {
+  return Object.freeze({ ...camera, target: position });
+}
+
+/**
  * Focuses the camera on a rendered entity while retaining a useful orbit distance.
  *
  * @param camera - Current camera state.
@@ -1023,7 +1038,13 @@ export function projectExplorerPoint(
     matrixValue(matrix, 11) * point[2] +
     matrixValue(matrix, 15);
   if (clipW <= 0) {
-    return Object.freeze({ x: 0, y: 0, depth: 1, visible: false });
+    return Object.freeze({
+      x: 0,
+      y: 0,
+      depth: 1,
+      scale: PROJECTED_POINT_MIN_SCALE,
+      visible: false,
+    });
   }
   const normalizedX = clipX / clipW;
   const normalizedY = clipY / clipW;
@@ -1032,6 +1053,10 @@ export function projectExplorerPoint(
     x: (normalizedX * 0.5 + 0.5) * viewport.width,
     y: (1 - (normalizedY * 0.5 + 0.5)) * viewport.height,
     depth,
+    scale: Math.max(
+      PROJECTED_POINT_MIN_SCALE,
+      Math.min(PROJECTED_POINT_MAX_SCALE, camera.distance / clipW),
+    ),
     visible:
       depth >= 0 &&
       depth <= 1 &&

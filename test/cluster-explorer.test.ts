@@ -13,6 +13,7 @@ import {
   focusCameraOnNeighborhood,
   focusCameraOnPoint,
   interpolateCameraState,
+  moveCameraTarget,
   normalizeExplorerSelection,
   orbitCamera,
   pickExplorerEntity,
@@ -124,17 +125,20 @@ describe("Cluster explorer scene and selection seam", () => {
     expect(neighborhood.entities).toEqual(neighborhood.systems);
   });
 
-  test("eases camera travel between materialized System neighborhoods", () => {
-    const from = createCameraState([0, 0, 0]);
-    const to = Object.freeze({
-      ...from,
-      target: [1, 2, 3] as const,
-      distance: 1,
-    });
+  test("eases camera travel while preserving the current zoom level", () => {
+    const from = Object.freeze({ ...createCameraState([0, 0, 0]), distance: 0.72 });
+    const to = moveCameraTarget(from, [1, 2, 3]);
+    const quarter = interpolateCameraState(from, to, 0.25);
 
     expect(interpolateCameraState(from, to, 0)).toEqual(from);
     expect(interpolateCameraState(from, to, 1)).toEqual(to);
-    expect(interpolateCameraState(from, to, 0.25).target).toEqual([0.15625, 0.3125, 0.46875]);
+    expect(quarter.target).toEqual([0.15625, 0.3125, 0.46875]);
+    expect(quarter.distance).toBe(from.distance);
+    expect(to).toMatchObject({
+      distance: from.distance,
+      yaw: from.yaw,
+      pitch: from.pitch,
+    });
   });
 
   test("keeps generated provenance visible and filterable after materialization", () => {
@@ -229,7 +233,19 @@ describe("Cluster explorer scene and selection seam", () => {
     const orbited = orbitCamera(focused, 20, -12);
     const zoomed = zoomCamera(orbited, -100_000);
 
+    const perspectiveCamera = Object.freeze({
+      target: [0, 0, 0] as const,
+      yaw: 0,
+      pitch: 0,
+      distance: 1,
+      far: undefined,
+    });
+    const centered = projectExplorerPoint([0, 0, 0], perspectiveCamera, viewport);
+    const distant = projectExplorerPoint([0, 0, -1], perspectiveCamera, viewport);
+
     expect(projected.visible).toBe(true);
+    expect(centered.scale).toBeCloseTo(1);
+    expect(distant.scale).toBeLessThan(centered.scale);
     expect(picked?.id).toBe("gate:terra");
     expect(orbited.yaw).not.toBe(focused.yaw);
     expect(zoomed.distance).toBeGreaterThanOrEqual(0.08);
